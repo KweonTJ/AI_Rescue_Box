@@ -1,0 +1,48 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+**/build/
+**/install/
+**/log/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ROS bag / runtime recording
+*.bag
+*.db3
+*.mcap
+rosbag2_*/
+
+# Temporary/runtime
+tmp/
+temp/
+cache/
+*.log
+
+# Virtual environments
+venv/
+.venv/
+
+# Local secrets only
+.env
+.env.*
+
