@@ -1,0 +1,6 @@
+experiment_no=03
+run_id=2026-08-09_19-28-48_handheld
+mode=handheld_camera_motion
+requested_duration_sec=180
+ros_domain_id=151
+container=isaac_ros_dev-aarch64-container
