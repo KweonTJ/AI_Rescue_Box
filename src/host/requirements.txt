@@ -1,0 +1,2 @@
+-r host_app/requirements.txt
+pyserial>=3.5,<4

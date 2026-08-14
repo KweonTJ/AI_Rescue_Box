@@ -1,0 +1,3 @@
+-r jetson_app/requirements.txt
+-r jetson_app/requirements-api.txt
+pyserial>=3.5,<4

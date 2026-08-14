@@ -1,0 +1,9 @@
+config/jetson.env
+__pycache__/
+*.pyc
+.venv/
+.dart_tool/
+build/
+install/
+log/
+data/
