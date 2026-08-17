@@ -1,16 +1,20 @@
 # Shared RGB-D synchronization. One synchronized RGBDImage stream is reused by
-# visual odometry and graph SLAM, avoiding duplicate synchronization work.
+# visual odometry and graph SLAM. Larger queues absorb Astra timestamp jitter
+# without forcing RTAB-Map to wait for a second synchronization stage.
 rgbd_sync:
   ros__parameters:
     approx_sync: true
     approx_sync_max_interval: 0.05
-    topic_queue_size: 2
-    sync_queue_size: 5
+    topic_queue_size: 10
+    sync_queue_size: 10
     qos: 2
     qos_camera_info: 2
     depth_scale: 1.0
 
-# Handheld/camera-only visual odometry baseline.
+# Handheld RGB-D visual odometry accuracy profile.
+#
+# F2M keeps a local feature map instead of matching only adjacent frames.
+# Local g2o bundle adjustment jointly refines recent keyframes and landmarks.
 rgbd_odometry:
   ros__parameters:
     frame_id: camera_link
@@ -23,21 +27,28 @@ rgbd_odometry:
     always_process_most_recent_frame: true
 
     Odom/Strategy: "0"
-    OdomF2M/MaxSize: "1000"
-    Odom/ResetCountdown: "3"
+    Odom/ResetCountdown: "10"
     Odom/ImageDecimation: "1"
     Odom/GuessMotion: "true"
     Odom/FilteringStrategy: "0"
+    Odom/VisKeyFrameThr: "200"
+
+    OdomF2M/MaxSize: "1500"
+    OdomF2M/BundleAdjustment: "1"
+    OdomF2M/BundleAdjustmentMaxFrames: "12"
 
     # GFTT detector + ORB descriptor is broadly available in OpenCV builds.
     Vis/FeatureType: "8"
-    Vis/MaxFeatures: "800"
-    Vis/MinInliers: "15"
+    Vis/MaxFeatures: "1200"
+    Vis/MinInliers: "20"
     Vis/MinDepth: "0.3"
-    Vis/MaxDepth: "5.0"
+    Vis/MaxDepth: "4.5"
 
-# RTAB-Map handles the global graph, loop closure, and the lightweight 2D map.
-# nvblox, when enabled, is reserved for the local 3D TSDF/ESDF map.
+# RTAB-Map global graph, loop closure, and 2D occupancy map.
+#
+# Neighbor links are re-registered before insertion. When a loop closure is
+# accepted, local bundle adjustment refines the closure neighborhood before
+# the global graph is optimized with g2o.
 rtabmap:
   ros__parameters:
     frame_id: camera_link
@@ -61,22 +72,38 @@ rtabmap:
     Mem/InitWMWithAllNodes: "false"
 
     Rtabmap/DetectionRate: "3.0"
-    Rtabmap/TimeThr: "200"
+    Rtabmap/TimeThr: "0"
+    Rtabmap/LoopThr: "0.11"
+
+    # Visual words used for global loop-closure hypotheses.
+    Kp/DetectorStrategy: "8"
+    Kp/MaxFeatures: "1200"
 
     RGBD/CreateOccupancyGrid: "true"
-    RGBD/NeighborLinkRefining: "false"
+    RGBD/NeighborLinkRefining: "true"
+    RGBD/LocalBundleOnLoopClosure: "true"
+    RGBD/LoopCovLimited: "true"
     RGBD/ProximityBySpace: "true"
 
+    Optimizer/Strategy: "1"
+    Optimizer/Iterations: "30"
+
+    # Keep the default map 2D-first for handheld tests. Higher-resolution local
+    # grids and radius filtering reduce isolated depth speckles.
     Grid/Sensor: "1"
     Grid/3D: "false"
-    Grid/DepthDecimation: "4"
+    Grid/DepthDecimation: "2"
     Grid/RangeMin: "0.3"
-    Grid/RangeMax: "5.0"
+    Grid/RangeMax: "4.5"
     Grid/CellSize: "0.05"
+    Grid/NoiseFilteringRadius: "0.08"
+    Grid/NoiseFilteringMinNeighbors: "5"
+    Grid/RayTracing: "true"
 
     Reg/Strategy: "0"
+    Vis/BundleAdjustment: "1"
     Vis/FeatureType: "8"
-    Vis/MaxFeatures: "800"
-    Vis/MinInliers: "20"
+    Vis/MaxFeatures: "1200"
+    Vis/MinInliers: "25"
     Vis/MinDepth: "0.3"
-    Vis/MaxDepth: "5.0"
+    Vis/MaxDepth: "4.5"
