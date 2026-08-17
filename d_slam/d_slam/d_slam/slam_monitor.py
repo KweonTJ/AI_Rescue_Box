@@ -146,7 +146,9 @@ class SlamMonitor(Node):
 
         latency_ms = (self.get_clock().now().nanoseconds - stamp_ns) / 1_000_000.0
         self.last_odom_latency_ms = (
-            latency_ms if math.isfinite(latency_ms) and 0.0 <= latency_ms <= 60_000.0 else None
+            latency_ms
+            if math.isfinite(latency_ms) and 0.0 <= latency_ms <= 60_000.0
+            else None
         )
 
     def on_map(self, msg: OccupancyGrid) -> None:
@@ -176,7 +178,7 @@ class SlamMonitor(Node):
             for stream in (self.color, self.depth, self.odom, self.map)
         )
 
-        sync_text = "rgb_depth_lata=n/a"
+        sync_text = "rgb_depth_delta=n/a"
         if self.color.last_stamp_ns is not None and self.depth.last_stamp_ns is not None:
             delta_ms = abs(self.color.last_stamp_ns - self.depth.last_stamp_ns) / 1_000_000.0
             sync_text = f"rgb_depth_delta={delta_ms:.1f}ms"
@@ -206,7 +208,8 @@ def main(args=None) -> None:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
