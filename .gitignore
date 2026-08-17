@@ -57,3 +57,4 @@ d_slam/**/video/
 # Python cache
 **/__pycache__/
 *.pyc
+d_slam/map/*.db

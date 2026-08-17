@@ -3,7 +3,7 @@
 rgbd_sync:
   ros__parameters:
     approx_sync: true
-    approx_sync_max_interval: 0.02
+    approx_sync_max_interval: 0.05
     topic_queue_size: 2
     sync_queue_size: 5
     qos: 2
@@ -48,9 +48,9 @@ rtabmap:
     subscribe_rgb: false
     subscribe_depth: false
     subscribe_rgbd: true
-    subscribe_odom_info: true
+    subscribe_odom_info: false
     approx_sync: true
-    approx_sync_max_interval: 0.02
+    approx_sync_max_interval: 0.05
     wait_for_transform: 0.2
 
     qos_image: 2

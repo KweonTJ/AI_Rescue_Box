@@ -92,7 +92,7 @@ class SlamMonitor(Node):
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
         )
 
-        self.subscriptions = [
+        self._subscriptions = [
             self.create_subscription(
                 Image,
                 str(self.get_parameter("color_topic").value),
