@@ -1,0 +1,26 @@
+# Local 3D map tuned to avoid competing with visual odometry for every frame.
+nvblox_node:
+  ros__parameters:
+    num_cameras: 1
+
+    use_depth: true
+    use_color: false
+    use_lidar: false
+
+    use_tf_transforms: true
+    use_topic_transforms: false
+    global_frame: odom
+
+    mapping_type: static_tsdf
+    voxel_size: 0.05
+
+    # Keep a bounded local map instead of retaining the full mission volume.
+    map_clearing_radius_m: 8.0
+
+    integrate_depth_rate_hz: 15.0
+    update_mesh_rate_hz: 1.0
+    update_esdf_rate_hz: 2.0
+
+    input_qos: SENSOR_DATA
+    print_rates_to_console: true
+    print_timings_to_console: false

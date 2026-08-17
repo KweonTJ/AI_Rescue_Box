@@ -1,103 +1,111 @@
 #!/usr/bin/env python3
+"""Lightweight rolling-rate monitor for the Astra depth stream."""
 
+from __future__ import annotations
+
+from collections import deque
 import time
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 
 
 class DepthMonitor(Node):
+    def __init__(self) -> None:
+        super().__init__("depth_monitor")
 
-    def __init__(self):
-        super().__init__('depth_monitor')
+        self.declare_parameter("depth_topic", "/camera/depth/image_raw")
+        self.declare_parameter("report_period_sec", 2.0)
+        self.declare_parameter("window_sec", 5.0)
+        self.declare_parameter("stale_after_sec", 2.0)
 
-        self.declare_parameter(
-            'depth_topic',
-            '/camera/depth/image_raw'
-        )
+        depth_topic = str(self.get_parameter("depth_topic").value)
+        report_period = float(self.get_parameter("report_period_sec").value)
+        self.window_sec = float(self.get_parameter("window_sec").value)
+        self.stale_after_sec = float(self.get_parameter("stale_after_sec").value)
 
-        depth_topic = self.get_parameter(
-            'depth_topic'
-        ).get_parameter_value().string_value
-
-        self.last_time = None
-        self.frame_count = 0
-        self.start_time = time.time()
+        self.receive_times: deque[float] = deque()
+        self.last_receive_time: float | None = None
+        self.total_frames = 0
+        self.first_frame_logged = False
 
         self.subscription = self.create_subscription(
             Image,
             depth_topic,
             self.depth_callback,
-            10
+            qos_profile_sensor_data,
         )
+        self.timer = self.create_timer(report_period, self.print_status)
 
-        self.timer = self.create_timer(
-            2.0,
-            self.print_status
-        )
+        self.get_logger().info(f"Depth monitor listening: {depth_topic}")
+
+    def depth_callback(self, msg: Image) -> None:
+        now = time.monotonic()
+        self.total_frames += 1
+        self.last_receive_time = now
+        self.receive_times.append(now)
+        self._trim(now)
+
+        if not self.first_frame_logged:
+            self.first_frame_logged = True
+            self.get_logger().info(
+                "Depth stream detected: "
+                f"{msg.width}x{msg.height}, "
+                f"encoding={msg.encoding}, "
+                f"frame={msg.header.frame_id}"
+            )
+
+    def _trim(self, now: float) -> None:
+        cutoff = now - self.window_sec
+        while self.receive_times and self.receive_times[0] < cutoff:
+            self.receive_times.popleft()
+
+    def _rolling_rate(self) -> float:
+        if len(self.receive_times) < 2:
+            return 0.0
+        elapsed = self.receive_times[-1] - self.receive_times[0]
+        if elapsed <= 0.0:
+            return 0.0
+        return (len(self.receive_times) - 1) / elapsed
+
+    def print_status(self) -> None:
+        now = time.monotonic()
+        self._trim(now)
+
+        if self.last_receive_time is None:
+            self.get_logger().warn("No depth frames received")
+            return
+
+        age = now - self.last_receive_time
+        rate = self._rolling_rate()
+        if age > self.stale_after_sec:
+            self.get_logger().warn(
+                "Depth stream stopped | "
+                f"last_frame_age={age:.2f}s | total={self.total_frames}"
+            )
+            return
 
         self.get_logger().info(
-            f'Depth monitor listening: {depth_topic}'
+            "Depth stream OK | "
+            f"rolling={rate:.1f} Hz | "
+            f"last_frame_age={age * 1000.0:.0f} ms | "
+            f"total={self.total_frames}"
         )
 
-    def depth_callback(self, msg):
 
-        self.frame_count += 1
-        self.last_time = time.time()
-
-        if self.frame_count == 1:
-            self.get_logger().info(
-                f'Depth stream detected: '
-                f'{msg.width}x{msg.height}, '
-                f'encoding={msg.encoding}, '
-                f'frame={msg.header.frame_id}'
-            )
-
-    def print_status(self):
-
-        elapsed = time.time() - self.start_time
-
-        if elapsed <= 0:
-            return
-
-        hz = self.frame_count / elapsed
-
-        if self.last_time is None:
-            self.get_logger().warn(
-                'No depth frames received'
-            )
-            return
-
-        age = time.time() - self.last_time
-
-        if age > 2.0:
-            self.get_logger().warn(
-                f'Depth stream stopped. '
-                f'Last frame {age:.1f}s ago'
-            )
-        else:
-            self.get_logger().info(
-                f'Depth stream OK | '
-                f'frames={self.frame_count} | '
-                f'avg={hz:.1f} Hz'
-            )
-
-
-def main(args=None):
-
+def main(args=None) -> None:
     rclpy.init(args=args)
-
     node = DepthMonitor()
-
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
-    node.destroy_node()
-    rclpy.shutdown()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

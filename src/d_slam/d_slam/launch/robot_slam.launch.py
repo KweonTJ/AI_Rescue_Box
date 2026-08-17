@@ -1,4 +1,4 @@
-"""Default handheld RGB-D SLAM launch (Astra + RTAB-Map, no nvblox)."""
+"""Robot mode: Astra RGB-D + external fused odometry + optional nvblox."""
 
 import os
 
@@ -14,18 +14,16 @@ from launch.substitutions import LaunchConfiguration
 
 from d_slam.launch_helpers import (
     as_bool,
+    make_nvblox_container,
     make_rgbd_sync_node,
     make_rtabmap_node,
-    make_visual_odometry_node,
 )
 
 
 def _launch_setup(context, *args, **kwargs):
     params_file = LaunchConfiguration("params_file").perform(context)
-    frame_id = LaunchConfiguration("frame_id").perform(context)
-    odom_frame_id = LaunchConfiguration("odom_frame_id").perform(context)
-    map_frame_id = LaunchConfiguration("map_frame_id").perform(context)
-    database_path = LaunchConfiguration("database_path").perform(context)
+    use_sim_time = as_bool(LaunchConfiguration("use_sim_time").perform(context))
+    log_level = LaunchConfiguration("log_level").perform(context)
 
     color_topic = LaunchConfiguration("color_topic").perform(context)
     depth_topic = LaunchConfiguration("depth_topic").perform(context)
@@ -35,13 +33,7 @@ def _launch_setup(context, *args, **kwargs):
     odom_info_topic = LaunchConfiguration("odom_info_topic").perform(context)
     map_topic = LaunchConfiguration("map_topic").perform(context)
 
-    use_sim_time = as_bool(LaunchConfiguration("use_sim_time").perform(context))
-    delete_db_on_start = as_bool(
-        LaunchConfiguration("delete_db_on_start").perform(context)
-    )
-    log_level = LaunchConfiguration("log_level").perform(context)
-
-    return [
+    actions = [
         make_rgbd_sync_node(
             params_file=params_file,
             color_topic=color_topic,
@@ -51,59 +43,79 @@ def _launch_setup(context, *args, **kwargs):
             use_sim_time=use_sim_time,
             log_level=log_level,
         ),
-        make_visual_odometry_node(
-            params_file=params_file,
-            frame_id=frame_id,
-            odom_frame_id=odom_frame_id,
-            rgbd_topic=rgbd_topic,
-            odom_topic=odom_topic,
-            odom_info_topic=odom_info_topic,
-            publish_tf=True,
-            use_sim_time=use_sim_time,
-            log_level=log_level,
-        ),
         make_rtabmap_node(
             params_file=params_file,
-            frame_id=frame_id,
-            odom_frame_id=odom_frame_id,
-            map_frame_id=map_frame_id,
-            database_path=database_path,
+            frame_id=LaunchConfiguration("frame_id").perform(context),
+            odom_frame_id=LaunchConfiguration("odom_frame_id").perform(context),
+            map_frame_id=LaunchConfiguration("map_frame_id").perform(context),
+            database_path=LaunchConfiguration("database_path").perform(context),
             rgbd_topic=rgbd_topic,
             odom_topic=odom_topic,
             odom_info_topic=odom_info_topic,
             map_topic=map_topic,
-            subscribe_odom_info=True,
+            subscribe_odom_info=False,
             publish_tf=True,
-            delete_db_on_start=delete_db_on_start,
-            approx_sync_max_interval=0.02,
+            delete_db_on_start=as_bool(
+                LaunchConfiguration(
+                    "delete_db_on_start"
+                ).perform(context)
+            ),
+            approx_sync_max_interval=0.05,
             use_sim_time=use_sim_time,
             log_level=log_level,
         ),
     ]
 
+    if as_bool(LaunchConfiguration("use_nvblox").perform(context)):
+        actions.append(
+            make_nvblox_container(
+                params_file=LaunchConfiguration("nvblox_params_file").perform(
+                    context
+                ),
+                global_frame=LaunchConfiguration("nvblox_global_frame").perform(
+                    context
+                ),
+                depth_topic=depth_topic,
+                depth_camera_info_topic=LaunchConfiguration(
+                    "depth_camera_info_topic"
+                ).perform(context),
+                use_sim_time=use_sim_time,
+            )
+        )
+
+    return actions
+
 
 def generate_launch_description():
     package_share = get_package_share_directory("d_slam")
+    camera_launch = os.path.join(package_share, "launch", "camera_only.launch.py")
     default_params = os.path.join(package_share, "config", "rtabmap.yaml")
+    default_nvblox_params = os.path.join(package_share, "config", "nvblox.yaml")
     default_camera_params = os.path.join(
         package_share,
         "config",
         "astra_slam.yaml",
     )
-    default_database = os.path.expanduser("~/.ros/d_slam_rtabmap.db")
-    camera_launch = os.path.join(package_share, "launch", "camera_only.launch.py")
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("params_file", default_value=default_params),
             DeclareLaunchArgument(
+                "nvblox_params_file", default_value=default_nvblox_params
+            ),
+            DeclareLaunchArgument(
                 "camera_params_file", default_value=default_camera_params
             ),
-            DeclareLaunchArgument("frame_id", default_value="camera_link"),
+            DeclareLaunchArgument("frame_id", default_value="base_link"),
             DeclareLaunchArgument("odom_frame_id", default_value="odom"),
             DeclareLaunchArgument("map_frame_id", default_value="map"),
-            DeclareLaunchArgument("database_path", default_value=default_database),
+            DeclareLaunchArgument(
+                "database_path",
+                default_value=os.path.expanduser("~/.ros/d_slam_robot.db"),
+            ),
             DeclareLaunchArgument("delete_db_on_start", default_value="true"),
+            DeclareLaunchArgument("use_nvblox", default_value="false"),
+            DeclareLaunchArgument("nvblox_global_frame", default_value="odom"),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("log_level", default_value="info"),
             DeclareLaunchArgument(
@@ -115,8 +127,14 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "camera_info_topic", default_value="/camera/color/camera_info"
             ),
+            DeclareLaunchArgument(
+                "depth_camera_info_topic",
+                default_value="/camera/color/camera_info",
+            ),
             DeclareLaunchArgument("rgbd_topic", default_value="/d_slam/rgbd_image"),
-            DeclareLaunchArgument("odom_topic", default_value="/rtabmap/odom"),
+            DeclareLaunchArgument(
+                "odom_topic", default_value="/odometry/filtered"
+            ),
             DeclareLaunchArgument(
                 "odom_info_topic", default_value="/rtabmap/odom_info"
             ),

@@ -2,18 +2,23 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>d_slam</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="a@todo.todo">a</maintainer>
-  <license>TODO: License declaration</license>
+  <version>0.1.0</version>
+  <description>Astra RGB-D SLAM and diagnostics for the AI Rescue Box project.</description>
+  <maintainer email="jeongyun061030@gmail.com">Jeong-Yun-Kim</maintainer>
+  <license>Apache-2.0</license>
 
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>astra_camera</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
   <exec_depend>nvblox_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>rtabmap_launch</exec_depend>
+  <exec_depend>rtabmap_odom</exec_depend>
+  <exec_depend>rtabmap_slam</exec_depend>
+  <exec_depend>rtabmap_sync</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

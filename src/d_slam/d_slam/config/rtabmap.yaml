@@ -1,53 +1,82 @@
+# Shared RGB-D synchronization. One synchronized RGBDImage stream is reused by
+# visual odometry and graph SLAM, avoiding duplicate synchronization work.
+rgbd_sync:
+  ros__parameters:
+    approx_sync: true
+    approx_sync_max_interval: 0.02
+    topic_queue_size: 2
+    sync_queue_size: 5
+    qos: 2
+    qos_camera_info: 2
+    depth_scale: 1.0
+
+# Handheld/camera-only visual odometry baseline.
 rgbd_odometry:
   ros__parameters:
-
-    frame_id: base_link
+    frame_id: camera_link
     odom_frame_id: odom
-
     publish_tf: true
-
-    approx_sync: true
-    approx_sync_max_interval: 0.05
-
-    qos: 1
-    qos_camera_info: 1
-
+    subscribe_rgbd: true
     wait_for_transform: 0.2
+    qos: 2
+    qos_camera_info: 2
+    always_process_most_recent_frame: true
 
     Odom/Strategy: "0"
     OdomF2M/MaxSize: "1000"
-    Odom/ResetCountdown: "1"
+    Odom/ResetCountdown: "3"
+    Odom/ImageDecimation: "1"
+    Odom/GuessMotion: "true"
+    Odom/FilteringStrategy: "0"
 
+    # GFTT detector + ORB descriptor is broadly available in OpenCV builds.
+    Vis/FeatureType: "8"
+    Vis/MaxFeatures: "800"
     Vis/MinInliers: "15"
-    Vis/FeatureType: "6"
-    Vis/MaxFeatures: "1000"
+    Vis/MinDepth: "0.3"
+    Vis/MaxDepth: "5.0"
 
-
+# RTAB-Map handles the global graph, loop closure, and the lightweight 2D map.
+# nvblox, when enabled, is reserved for the local 3D TSDF/ESDF map.
 rtabmap:
   ros__parameters:
-
-    frame_id: base_link
+    frame_id: camera_link
     odom_frame_id: odom
     map_frame_id: map
-
-    subscribe_depth: true
-    subscribe_rgb: true
-
-    approx_sync: true
-
-    qos_image: 1
-    qos_camera_info: 1
-
     publish_tf: true
 
-    Mem/IncrementalMemory: "true"
+    subscribe_rgb: false
+    subscribe_depth: false
+    subscribe_rgbd: true
+    subscribe_odom_info: true
+    approx_sync: true
+    approx_sync_max_interval: 0.02
+    wait_for_transform: 0.2
 
-    RGBD/NeighborLinkRefining: "true"
+    qos_image: 2
+    qos_camera_info: 2
+    qos_odom: 1
+
+    Mem/IncrementalMemory: "true"
+    Mem/InitWMWithAllNodes: "false"
+
+    Rtabmap/DetectionRate: "3.0"
+    Rtabmap/TimeThr: "200"
+
+    RGBD/CreateOccupancyGrid: "true"
+    RGBD/NeighborLinkRefining: "false"
     RGBD/ProximityBySpace: "true"
 
-    Grid/FromDepth: "true"
-    Grid/3D: "true"
+    Grid/Sensor: "1"
+    Grid/3D: "false"
+    Grid/DepthDecimation: "4"
+    Grid/RangeMin: "0.3"
+    Grid/RangeMax: "5.0"
+    Grid/CellSize: "0.05"
 
     Reg/Strategy: "0"
-
-    Vis/MinInliers: "15"
+    Vis/FeatureType: "8"
+    Vis/MaxFeatures: "800"
+    Vis/MinInliers: "20"
+    Vis/MinDepth: "0.3"
+    Vis/MaxDepth: "5.0"

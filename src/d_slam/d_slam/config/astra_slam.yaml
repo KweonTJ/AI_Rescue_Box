@@ -1,0 +1,45 @@
+# Flat parameter file consumed by the Astra camera component.
+# Depth is aligned to color, so RTAB-Map and nvblox use color camera_info.
+camera_name: "camera"
+
+color_width: 640
+color_height: 480
+color_fps: 30
+enable_color: true
+
+ir_width: 640
+ir_height: 480
+ir_fps: 30
+enable_ir: false
+
+depth_width: 640
+depth_height: 480
+depth_fps: 30
+enable_depth: true
+
+depth_align: true
+color_depth_synchronization: true
+
+serial_number: ""
+number_of_devices: 1
+
+uvc_camera.enable: false
+uvc_camera.format: "mjpeg"
+uvc_camera.vid: 0x0
+uvc_camera.pid: 0x0
+uvc_camera.retry_count: 100
+
+color_roi.x: -1
+color_roi.y: -1
+color_roi.width: -1
+color_roi.height: -1
+depth_roi.x: -1
+depth_roi.y: -1
+depth_roi.width: -1
+depth_roi.height: -1
+
+depth_scale: 1
+publish_tf: true
+# These transforms are static; publishing once avoids an unnecessary 10 Hz loop.
+tf_publish_rate: 0.0
+reconnect_timeout: 6.0
