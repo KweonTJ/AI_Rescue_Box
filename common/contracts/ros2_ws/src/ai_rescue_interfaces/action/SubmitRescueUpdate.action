@@ -1,0 +1,13 @@
+string mission_id
+uint32 mission_version
+uint32 result_version
+string semantic_result_path
+bool urgent_hint
+---
+bool accepted
+string transfer_id
+string message
+---
+string stage
+float32 progress
+uint32 bytes_queued

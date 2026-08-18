@@ -1,0 +1,7 @@
+string mission_id
+uint32 mission_version
+uint32 plan_version
+string plan_path
+---
+bool success
+string message

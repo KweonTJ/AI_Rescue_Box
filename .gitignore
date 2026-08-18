@@ -6,7 +6,7 @@ log/
 **/install/
 **/log/
 
-# Python cache
+# Python
 __pycache__/
 **/__pycache__/
 *.pyc
@@ -14,47 +14,56 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 
-# IDE
+# Virtual environments
+.venv/
+.venv_*/
+venv/
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+**/flutter_app/build/
+**/flutter_app/.dart_tool/
+
+# IDE / OS
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# ROS bag / runtime recording
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!*.env.example
+src/host/config/host.env
+src/uwb/config/jetson.env
+
+# Runtime data
+/data/
+/tmp/
+/temp/
+/cache/
+*.log
+
+# ROS bags and generated maps
 *.bag
 *.db3
 *.mcap
 rosbag2_*/
+src/d_slam/**/video/
+src/d_slam/**/map/*.db
+src/d_slam/**/runtime/
 
-# Temporary/runtime
-tmp/
-temp/
-cache/
-*.log
-
-# Virtual environments
-venv/
-.venv/
-
-# Local secrets only
-.env
-.env.*
-
-# D-SLAM generated logs
-d_slam/log/
-d_slam/**/log/
-
-# D-SLAM recorded videos
-d_slam/video/
-d_slam/**/video/
-
-# Python cache
-**/__pycache__/
-*.pyc
-d_slam/map/*.db
+# Model weights are installed separately
+*.engine
+*.onnx
+*.pt
+*.pth

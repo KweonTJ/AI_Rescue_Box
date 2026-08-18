@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-rescue-contracts"
+version = "0.1.0"
+description = "Dependency-free contracts for AI Rescue Box artifacts"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai_rescue_contracts*"]

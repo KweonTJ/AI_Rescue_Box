@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-rescue-box.local/contracts/approved_plan.schema.json",
+  "title": "Host Approved Rescue Plan",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "mission_id", "mission_version", "base_result_version", "approved_plan_version", "artifact_version", "modified_at", "coordinate_frame", "units", "source", "confidence", "approved_victims", "excluded_victim_candidates", "approved_risk_zones", "modified_or_cleared_risk_zones", "final_team_assignments", "approved_routes", "priorities", "safe_waiting_points"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "mission_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
+    "mission_version": {"type": "integer", "minimum": 1},
+    "base_result_version": {"type": "integer", "minimum": 1},
+    "approved_plan_version": {"type": "integer", "minimum": 1},
+    "artifact_version": {"type": "integer", "minimum": 1},
+    "modified_at": {"type": "string", "format": "date-time"},
+    "coordinate_frame": {"const": "mission_map"},
+    "units": {"enum": ["meters", "m"]},
+    "source": {"type": "string", "minLength": 1},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "approved_victims": {"type": "array"},
+    "excluded_victim_candidates": {"type": "array"},
+    "approved_risk_zones": {"type": "array"},
+    "modified_or_cleared_risk_zones": {"type": "array"},
+    "final_team_assignments": {"type": "array"},
+    "approved_routes": {"type": "array"},
+    "priorities": {"type": "array"},
+    "safe_waiting_points": {"type": "array"},
+    "notes": {"type": "string"}
+  }
+}
