@@ -1,47 +1,28 @@
 # AI Rescue Box 개발 순서
 
-## 완료된 기반 작업: 단계 0 + 단계 1
+## Stage 0 — 계약 및 Source of Truth 정리
 
-- `src/host`, `src/uwb`, `src/d_slam` 책임 경계 고정
-- `common/contracts`에 JSON, Python, ROS 계약 정의
-- 좌표계와 독립 Version 규칙 정의
-- 기존 `rescue_app` 런타임 소스를 이 저장소로 이관
-- `prepare_from_rescue_app.sh` 런타임 의존 제거
-- Jetson 통신 coordinator, UWB ROS client, spool, result/preview sender를 `src/uwb`로 이동
-- 센서, 분석, Mission 저장, Jetson API와 Flutter를 `src/d_slam`으로 이동
+목표:
 
-## 단계 2: Host → UWB → d_slam Mission 연결
+- `app`을 최종 단일 Source of Truth로 만든다.
+- 기능 책임을 `src/host`, `src/uwb`, `src/d_slam`으로 고정한다.
+- 통신 계약의 단일 위치를 `src/uwb/interfaces`로 고정한다.
+- JSON Schema, Python Validator, ROS Interface의 필수 필드·좌표계·버전 규칙을 일치시킨다.
+- 별도 공통 source package를 제거한다.
 
-1. Host가 `base_map`과 `mission_manifest`를 순서대로 전송한다.
-2. Jetson UWB가 두 Artifact를 SHA-256과 Version으로 검증한다.
-3. UWB runtime이 d_slam Mission application interface를 호출한다.
-4. d_slam이 구조도와 Manifest를 버전 디렉터리에 원자적으로 저장한다.
-5. Mission state를 `READY`로 바꾼 뒤 Application ACK를 반환한다.
+## Stage 1 — 기능 변경 없는 Source Relocation
 
-완료 기준: Host에서 보낸 동일 Mission과 구조도가 Jetson Flutter/VNC 화면에 표시된다.
+목표:
 
-## 단계 3: d_slam 실센서 E2E
+- Host backend/UI/Host UWB bridge를 `src/host`에 둔다.
+- protocol/runtime/interfaces/Jetson UWB bridge/firmware를 `src/uwb`에 둔다.
+- Astra/SLAM/센서/분석/계획/Jetson API/UI를 `src/d_slam`에 둔다.
+- 각 Flutter 앱이 독립 프로젝트 구조를 갖도록 한다.
+- 기존 unit/mock test를 책임별 test 디렉터리로 이관한다.
+- 외부 저장소의 runtime/build 의존 없이 검증 가능하게 만든다.
 
-- Astra RGB, registered Depth, CameraInfo의 크기·Frame ID·Timestamp 검사
-- RTAB-Map Occupancy와 TF `map -> camera/base` 연결
-- 실제 YOLO ONNX/TensorRT 모델 연결
-- Person bbox → median depth → camera XYZ → ROS map → mission_map 변환
-- Depth/PointCloud 기반 기본 risk와 A* 경로 생성
+Stage 0·1은 구조 검사, legacy 문자열 검사, compileall, shell syntax, import boundary, 패키지별 unit/mock, 가능한 Flutter/ROS 검증이 모두 끝난 뒤에만 완료로 표시한다.
 
-완료 기준: Jetson 화면에 Robot, Victim, Risk, Route가 실제 센서 데이터로 표시된다.
+## Stage 2 이후
 
-## 단계 4: 결과 왕복
-
-- d_slam이 `semantic_result`와 `map_preview`를 생성한다.
-- UWB가 전송 Artifact와 Priority를 결정해 Host로 보낸다.
-- Host가 스키마, Mission ID, Version과 SHA-256을 검증하고 Overlay한다.
-- Host의 `approved_plan`을 Jetson으로 되돌려 d_slam이 적용한다.
-
-## 단계 5 이후
-
-1. Prior/Live map 정합과 Change Map
-2. Traversability, 다중 경로, Route Ranker, Safe Zone
-3. `urgent_event`, `map_delta`, Snapshot scheduler
-4. Host reconstruction과 change summary
-5. systemd, udev, Flutter/VNC 자동 실행
-6. rosbag 및 실제 UWB 정량 검증
+Stage 0·1 완료 전에는 실제 Host → UWB → d_slam Mission 적용, 실센서 기능 변경, 정합/Change Map/Traversability/Safe Zone/Route AI, 실제 Semantic Result 왕복, systemd/udev/VNC/배포 자동화를 구현하지 않는다.
