@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$D/_runtime_env.sh"; activate_runtime
-python3 "$UWB_ROOT/scripts/verify_package.py" --root "$UWB_ROOT"
-python3 -m jetson_app.api --help >/dev/null
-ros2 run uwb_jetson_bridge jetson_bridge --self-test
-python3 -m serial.tools.list_ports -v || true
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "$ROOT/../.." && pwd)"
+python3 -m compileall -q "$ROOT/protocol" "$ROOT/runtime"
+python3 "$REPO/scripts/check_import_boundaries.py"
+python3 -m pytest -q "$ROOT/tests"
+find "$ROOT" -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
