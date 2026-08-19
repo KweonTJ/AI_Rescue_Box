@@ -5,7 +5,7 @@ import 'host_controller.dart';
 final class PlatformMapFilePicker implements MapFilePicker {
   @override
   Future<PickedMap?> pick() async {
-    final result = await FilePicker.pickFiles(
+    final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['jpg', 'jpeg', 'png'],
       allowMultiple: false,
