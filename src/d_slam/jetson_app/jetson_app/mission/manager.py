@@ -22,6 +22,7 @@ from .artifacts import validate_approved_plan, validate_semantic_result
 VERSION_DIR_RE = re.compile(r"v([1-9][0-9]*)\Z")
 RESULT_RE = re.compile(r"semantic_result_v([1-9][0-9]*)\.json\Z")
 PLAN_RE = re.compile(r"approved_plan_v([1-9][0-9]*)\.json\Z")
+CURRENT_MISSION_FILE = "current_mission.json"
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,6 @@ class MissionManager:
         return value
 
     def _mission_root(self, mission_id: str) -> Path:
-        # MissionManifest validation prevents separators and traversal.
         return self.root / mission_id
 
     def mission_directory(self, mission_id: str, version: int) -> Path:
@@ -81,8 +81,6 @@ class MissionManager:
         return max(versions, default=None)
 
     def list_missions(self) -> tuple[tuple[str, int], ...]:
-        """List every stored verified mission/version, never only the newest one."""
-
         if not self.root.is_dir():
             return ()
         result = []
@@ -98,6 +96,33 @@ class MissionManager:
                 if child.is_dir() and not child.is_symlink() and match:
                     result.append((mission_root.name, int(match.group(1))))
         return tuple(sorted(result, key=lambda item: (item[0], item[1])))
+
+    def _current_path(self) -> Path:
+        return self.root / CURRENT_MISSION_FILE
+
+    def set_current_mission(self, mission_id: str, version: int) -> tuple[str, int]:
+        applied = self.load_mission(mission_id, int(version))
+        value = (applied.manifest.mission_id, applied.manifest.mission_version)
+        self.root.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(
+            self._current_path(),
+            {"mission_id": value[0], "mission_version": value[1], "state": "READY"},
+        )
+        return value
+
+    def current_mission_ref(self) -> tuple[str, int] | None:
+        path = self._current_path()
+        if not path.exists():
+            return None
+        value = self._read_json(path)
+        mission_id = value.get("mission_id")
+        mission_version = value.get("mission_version")
+        if not isinstance(mission_id, str) or not mission_id:
+            raise ValidationError("current mission reference has invalid mission_id")
+        if isinstance(mission_version, bool) or not isinstance(mission_version, int) or mission_version < 1:
+            raise ValidationError("current mission reference has invalid mission_version")
+        applied = self.load_mission(mission_id, mission_version)
+        return applied.manifest.mission_id, applied.manifest.mission_version
 
     def _validate_base_map(self, path: Path, manifest: MissionManifest) -> str:
         path = Path(path)
@@ -141,15 +166,12 @@ class MissionManager:
                 )
             mission_root = self._mission_root(manifest.mission_id)
             mission_root.mkdir(parents=True, exist_ok=True)
-            destination = self.mission_directory(
-                manifest.mission_id, manifest.mission_version
-            )
+            destination = self.mission_directory(manifest.mission_id, manifest.mission_version)
             if destination.exists():
                 raise StaleVersionError("mission version already exists")
-            staging = mission_root / (
-                f".v{manifest.mission_version}.{uuid.uuid4().hex}.part"
-            )
+            staging = mission_root / f".v{manifest.mission_version}.{uuid.uuid4().hex}.part"
             staging.mkdir()
+            promoted = False
             try:
                 extension = ".jpg" if image_format == "JPEG" else ".png"
                 stored_map = staging / f"base_map{extension}"
@@ -171,8 +193,19 @@ class MissionManager:
                 verification_path = staging / "verification.json"
                 atomic_write_json(verification_path, verification)
                 os.replace(staging, destination)
+                promoted = True
+                atomic_write_json(
+                    self._current_path(),
+                    {
+                        "mission_id": manifest.mission_id,
+                        "mission_version": manifest.mission_version,
+                        "state": "READY",
+                    },
+                )
             except Exception:
                 shutil.rmtree(staging, ignore_errors=True)
+                if promoted:
+                    shutil.rmtree(destination, ignore_errors=True)
                 raise
         return AppliedMission(
             manifest=manifest,
@@ -208,9 +241,7 @@ class MissionManager:
                     versions.append(int(match.group(1)))
         return max(versions, default=None)
 
-    def save_semantic_result(
-        self, mission_id: str, mission_version: int, result: Mapping[str, Any]
-    ) -> Path:
+    def save_semantic_result(self, mission_id: str, mission_version: int, result: Mapping[str, Any]) -> Path:
         directory = self.mission_directory(mission_id, mission_version)
         if not directory.is_dir():
             raise ValidationError("mission version is not stored")
@@ -221,9 +252,7 @@ class MissionManager:
         with self._lock:
             latest = self._latest_version(directory, RESULT_RE)
             if latest is not None and version <= latest:
-                raise StaleVersionError(
-                    f"semantic result version {version} is not newer than {latest}"
-                )
+                raise StaleVersionError(f"semantic result version {version} is not newer than {latest}")
             immutable = directory / f"semantic_result_v{version}.json"
             if immutable.exists():
                 raise StaleVersionError("semantic result version already exists")
@@ -232,35 +261,16 @@ class MissionManager:
         return immutable
 
     def latest_result_version(self, mission_id: str, mission_version: int) -> int | None:
-        return self._latest_version(
-            self.mission_directory(mission_id, mission_version), RESULT_RE
-        )
+        return self._latest_version(self.mission_directory(mission_id, mission_version), RESULT_RE)
 
-    def load_semantic_result(
-        self,
-        mission_id: str,
-        mission_version: int,
-        result_version: int | None = None,
-    ) -> dict[str, Any]:
-        """Load and revalidate an immutable stored semantic result.
-
-        The mutable ``semantic_result.json`` convenience copy is intentionally
-        not trusted for retransmission.  Selecting the latest immutable version
-        makes restart recovery deterministic and prevents a modified alias from
-        being put back on the radio.
-        """
-
+    def load_semantic_result(self, mission_id: str, mission_version: int, result_version: int | None = None) -> dict[str, Any]:
         directory = self.mission_directory(mission_id, mission_version)
         if not directory.is_dir():
             raise ValidationError("mission version is not stored")
         selected = result_version
         if selected is None:
             selected = self.latest_result_version(mission_id, mission_version)
-        if (
-            isinstance(selected, bool)
-            or not isinstance(selected, int)
-            or selected < 1
-        ):
+        if isinstance(selected, bool) or not isinstance(selected, int) or selected < 1:
             raise ValidationError("semantic result is not stored")
         value = self._read_json(directory / f"semantic_result_v{selected}.json")
         validated = validate_semantic_result(value, mission_id)
@@ -270,12 +280,7 @@ class MissionManager:
             raise ValidationError("semantic_result filename version does not match content")
         return validated
 
-    def apply_approved_plan(
-        self,
-        mission_id: str,
-        mission_version: int,
-        plan: Mapping[str, Any] | Path,
-    ) -> Path:
+    def apply_approved_plan(self, mission_id: str, mission_version: int, plan: Mapping[str, Any] | Path) -> Path:
         directory = self.mission_directory(mission_id, mission_version)
         if not directory.is_dir():
             raise ValidationError("mission version is not stored")
@@ -293,9 +298,7 @@ class MissionManager:
         with self._lock:
             latest_plan = self._latest_version(directory, PLAN_RE)
             if latest_plan is not None and plan_version <= latest_plan:
-                raise StaleVersionError(
-                    f"approved plan version {plan_version} is not newer than {latest_plan}"
-                )
+                raise StaleVersionError(f"approved plan version {plan_version} is not newer than {latest_plan}")
             immutable = directory / f"approved_plan_v{plan_version}.json"
             atomic_write_json(immutable, validated)
             atomic_write_json(directory / "approved_plan.json", validated)

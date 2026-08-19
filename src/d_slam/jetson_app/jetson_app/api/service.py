@@ -15,9 +15,11 @@ from ..storage import atomic_write_bytes, atomic_write_json
 from .events import EventHub
 from .ports import ArtifactTransportPort
 
+
 class ApiNotFoundError(LookupError): pass
 class ApiConflictError(RuntimeError): pass
 class ApiUnavailableError(RuntimeError): pass
+
 
 class JetsonApiService:
     def __init__(self, manager: MissionManager, *, pipeline: AnalysisPipeline|None=None, preview_renderer: OccupancyPreviewRenderer|None=None, candidate_source: Callable[[],Sequence[PersonCandidate]]|None=None, transport: ArtifactTransportPort|None=None, mode: str|None=None, events: EventHub|None=None):
@@ -28,26 +30,35 @@ class JetsonApiService:
         if self._mode in {'real','mock'}: return self._mode
         if self.pipeline is not None and getattr(self.pipeline.slam.status().mode,'value',self.pipeline.slam.status().mode)==ProviderMode.MOCK.value: return 'mock'
         return 'real'
+    def _selected_ref(self):
+        selected=self.manager.current_mission_ref()
+        with self._lock: self._selected=selected
+        return selected
     def health(self): return {'status':'ok','stage':'stage01','mode':self.mode,'analysis_ready':self.pipeline is not None,'transport_wired':self.transport is not None}
     def status(self):
         slam={'name':'SLAM','mode':'unavailable','connected':False,'message':'analysis pipeline is not configured'}
         if self.pipeline is not None:
             state=self.pipeline.slam.status(); slam={'name':state.name,'mode':getattr(state.mode,'value',state.mode),'connected':state.connected,'message':state.message}
         uwb=dict(self.transport.status()) if self.transport is not None else {'name':'UWB transport','mode':'not_wired','connected':False,'message':'communication is owned by src/uwb'}
-        return {'stage':'stage01','mode':self.mode,'current_mission':self._selected,'providers':{'slam':slam,'uwb':uwb},'runtime':{'analysis_ready':self.pipeline is not None,'transport_wired':self.transport is not None}}
-    def list_missions(self): return [{'mission_id':mid,'mission_version':ver,'active':self._selected==(mid,ver)} for mid,ver in self.manager.list_missions()]
+        return {'stage':'stage01','mode':self.mode,'current_mission':self._selected_ref(),'providers':{'slam':slam,'uwb':uwb},'runtime':{'analysis_ready':self.pipeline is not None,'transport_wired':self.transport is not None}}
+    def list_missions(self):
+        selected=self._selected_ref(); return [{'mission_id':mid,'mission_version':ver,'active':selected==(mid,ver)} for mid,ver in self.manager.list_missions()]
     def mission_detail(self, mission_id, mission_version):
         try: applied=self.manager.load_mission(mission_id,mission_version)
         except (ValidationError,OSError) as error: raise ApiNotFoundError(str(error)) from error
         return {'mission_id':mission_id,'mission_version':mission_version,'manifest':applied.manifest.to_dict(),'base_map':{'filename':applied.base_map_path.name,'download_url':f'/api/v1/missions/{mission_id}/{mission_version}/base-map.png'}}
     def select_mission(self, mission_id, mission_version):
-        result=self.mission_detail(mission_id,mission_version); self._selected=(mission_id,mission_version); self.events.publish('mission.selected',{'mission_id':mission_id,'mission_version':mission_version}); return result
+        result=self.mission_detail(mission_id,mission_version); selected=self.manager.set_current_mission(mission_id,mission_version)
+        with self._lock: self._selected=selected
+        self.events.publish('mission.selected',{'mission_id':mission_id,'mission_version':mission_version}); return result
     def current_mission(self):
-        if self._selected is None: raise ApiNotFoundError('no mission is selected')
-        return self.mission_detail(*self._selected)
+        selected=self._selected_ref()
+        if selected is None: raise ApiNotFoundError('no mission is selected')
+        return self.mission_detail(*selected)
     def _mission(self):
-        if self._selected is None: raise ApiConflictError('select a mission first')
-        return self.manager.load_mission(*self._selected)
+        selected=self._selected_ref()
+        if selected is None: raise ApiConflictError('select a mission first')
+        return self.manager.load_mission(*selected)
     def base_map_png(self, mission_id, mission_version):
         import io
         applied=self.manager.load_mission(mission_id,mission_version); out=io.BytesIO()

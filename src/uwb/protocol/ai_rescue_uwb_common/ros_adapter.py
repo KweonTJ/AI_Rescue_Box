@@ -490,8 +490,9 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
                     source,
                     metadata,
                     transfer_id=transfer_id,
-                    require_application_ack=bool(
-                        self.get_parameter("require_application_ack").value
+                    require_application_ack=(
+                        bool(self.get_parameter("require_application_ack").value)
+                        and request.artifact_type != "base_map"
                     ),
                     progress=feedback_callback,
                 )
