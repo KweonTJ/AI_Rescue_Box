@@ -4,7 +4,7 @@
   "title": "Semantic Rescue Map Result",
   "type": "object",
   "additionalProperties": true,
-  "required": ["schema_version", "mission_id", "base_map_version", "slam_map_version", "result_version", "artifact_version", "created_at", "coordinate_frame", "units", "source", "confidence", "robot_pose", "robot_trajectory", "victim_candidates", "confirmed_victims", "obstacles", "risk_zones", "entry_routes", "safe_waiting_points", "explored_areas", "unknown_areas"],
+  "required": ["schema_version", "mission_id", "base_map_version", "slam_map_version", "result_version", "artifact_version", "created_at", "coordinate_frame", "units", "source", "confidence", "robot_pose", "robot_trajectory", "victim_candidates", "confirmed_victims", "obstacles", "risk_zones", "entry_routes", "team_recommendations", "safe_waiting_points", "explored_areas", "unknown_areas"],
   "properties": {
     "schema_version": {"const": "1.0"},
     "mission_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"},
@@ -28,6 +28,7 @@
     "change_regions": {"type": "array"},
     "traversability": {"type": "object"},
     "entry_routes": {"type": "array", "items": {"type": "object"}},
+    "team_recommendations": {"type": "array", "items": {"type": "object"}},
     "safe_waiting_points": {"type": "array"},
     "explored_areas": {"type": "array"},
     "prior_only_areas": {"type": "array"},
