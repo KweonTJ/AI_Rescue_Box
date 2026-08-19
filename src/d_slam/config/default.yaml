@@ -1,0 +1,8 @@
+mode: real
+data_root: data
+model_path: null
+detection_confidence: 0.5
+map_preview_interval_seconds: 60
+map_preview_max_dimension: 768
+occupied_threshold: 65
+minimum_passage_width_m: 0.8
