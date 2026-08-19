@@ -6,6 +6,9 @@ on:
     branches:
       - app
       - agent/stage01-work
+  pull_request:
+    branches:
+      - app
 
 jobs:
   python-and-structure:
