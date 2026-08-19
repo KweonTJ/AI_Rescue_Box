@@ -1,4 +1,4 @@
-name: Stage 0-1 Verify
+name: Stage 0-1.5 Verify
 
 on:
   workflow_dispatch:
@@ -31,7 +31,25 @@ jobs:
       - name: Python compile
         run: python3 -m compileall -q src
       - name: Shell syntax
-        run: find src -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+        run: find src deploy -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem deploy/host_windows -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              Write-Error "PowerShell parse failed: $($_.FullName): $($errors -join '; ')"
+            }
+          }
+          if ($failed) { exit 1 }
       - name: Host Unit and Mock
         run: python3 -m pytest -q src/host/tests
       - name: UWB Unit and Mock
@@ -45,9 +63,10 @@ jobs:
             src/uwb/scripts/build.sh
             src/d_slam/scripts/build.sh
           else
-            echo "ROS colcon not run: runner has no sourced ROS 2 Humble environment."
+            echo "ROS build not run: runner has no sourced ROS 2 environment."
           fi
-  flutter-host:
+
+  flutter-host-web:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -57,7 +76,10 @@ jobs:
         run: flutter pub get && flutter analyze
       - working-directory: src/host/flutter_app
         run: flutter test
-  flutter-jetson:
+      - working-directory: src/host/flutter_app
+        run: flutter build web --release
+
+  flutter-tablet-android:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -67,3 +89,5 @@ jobs:
         run: flutter pub get && flutter analyze
       - working-directory: src/d_slam/flutter_app
         run: flutter test
+      - name: Build Tablet debug APK
+        run: ./deploy/tablet_android/build_apk.sh

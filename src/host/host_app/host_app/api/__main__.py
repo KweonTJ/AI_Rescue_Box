@@ -14,6 +14,11 @@ from .app import create_app
 from .service import HostApiService
 
 
+DEFAULT_WEB_ROOT = (
+    Path(__file__).resolve().parents[3] / "flutter_app" / "build" / "web"
+)
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -41,7 +46,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path(os.environ.get("AI_RESCUE_HOST_DATA", Path.cwd() / "data")),
     )
-    parser.add_argument("--no-ros", action="store_true")
+    parser.add_argument(
+        "--web-root",
+        type=Path,
+        default=Path(os.environ.get("AI_RESCUE_HOST_WEB_ROOT", DEFAULT_WEB_ROOT)),
+        help="Flutter Web build directory; served at / when index.html exists",
+    )
+    parser.add_argument(
+        "--bridge-mode",
+        choices=("offline", "ros"),
+        default=os.environ.get("AI_RESCUE_UWB_BRIDGE_MODE", "ros"),
+        help="offline keeps Backend/Web usable without ROS2; ros attaches the existing bridge client",
+    )
+    parser.add_argument(
+        "--no-ros",
+        action="store_true",
+        help="compatibility alias that forces bridge-mode offline",
+    )
     parser.add_argument(
         "--cors-origin",
         action="append",
@@ -103,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not 1 <= args.port <= 65535:
             raise ValueError("--port must be between 1 and 65535")
+        if args.bridge_mode not in {"offline", "ros"}:
+            raise ValueError("--bridge-mode must be offline or ros")
         if not math.isfinite(args.max_map_input_mib) or args.max_map_input_mib <= 0:
             raise ValueError("--max-map-input-mib must be positive and finite")
         if not math.isfinite(args.max_artifact_mib) or args.max_artifact_mib <= 0:
@@ -133,12 +156,15 @@ def main(argv: list[str] | None = None) -> int:
         assert RasterMapImporter and HostBridgeFacade and create_app
         print(f"AI Rescue Box Host backend/core OK (schema {SCHEMA_VERSION})")
         return 0
+
     bridge = HostBridgeFacade()
-    if not args.no_ros:
+    use_ros = args.bridge_mode == "ros" and not args.no_ros
+    if use_ros:
         try:
             bridge.attach(RclpyBridgeClient())
         except RuntimeError as error:
             raise SystemExit(f"ROS2 Bridge client startup failed: {error}") from error
+
     service = HostApiService(
         args.data_dir,
         bridge=bridge,
@@ -147,6 +173,20 @@ def main(argv: list[str] | None = None) -> int:
         transfer_timeout=args.transfer_timeout,
     )
     app = create_app(service, cors_origins=args.cors_origin)
+
+    web_root = args.web_root.expanduser().resolve()
+    if web_root.is_dir() and (web_root / "index.html").is_file():
+        from fastapi.staticfiles import StaticFiles
+
+        # API/WebSocket routes are registered before this catch-all mount.
+        app.mount("/", StaticFiles(directory=web_root, html=True), name="host-web")
+        print(f"[INFO] Host Flutter Web: {web_root}")
+    else:
+        print(
+            f"[INFO] Host Flutter Web build not found at {web_root}; Backend-only mode",
+            file=sys.stderr,
+        )
+
     try:
         import uvicorn
     except ImportError as error:

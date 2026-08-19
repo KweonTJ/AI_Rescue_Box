@@ -4,6 +4,17 @@ class _StatusPanel extends StatelessWidget {
   const _StatusPanel({required this.controller});
   final JetsonController controller;
 
+  String get _apiConnectionLabel {
+    if (controller.busy && controller.activeOperation == '초기 상태 확인') {
+      return 'Jetson 연결 중';
+    }
+    if (controller.error != null && controller.health.isEmpty) {
+      return 'Jetson 연결 실패';
+    }
+    if (controller.health['status'] == 'ok') return 'Jetson 연결됨';
+    return 'Jetson 연결 대기';
+  }
+
   @override
   Widget build(BuildContext context) {
     final uwb = controller.uwbProvider;
@@ -27,6 +38,9 @@ class _StatusPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
+          _InfoRow(label: 'API 연결', value: _apiConnectionLabel),
+          if (controller.apiBaseUri != null)
+            _InfoRow(label: 'Jetson API', value: controller.apiBaseUri.toString()),
           _InfoRow(label: '진행 상태', value: controller.progressStage),
           _InfoRow(
             label: 'UWB',
