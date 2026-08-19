@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-set -Eeuo pipefail
-D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "$D/_runtime_env.sh"; activate_ros
-python3 "$HOST_ROOT/scripts/verify_package.py" --root "$HOST_ROOT"
-python3 -m host_app.api --check
-ros2 run uwb_host_bridge host_bridge --self-test
-python3 -m serial.tools.list_ports -v || true
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "$ROOT/../.." && pwd)"
+python3 -m compileall -q "$ROOT/host_app"
+python3 "$REPO/scripts/check_import_boundaries.py"
+python3 -m pytest -q "$ROOT/tests"
+find "$ROOT" -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
