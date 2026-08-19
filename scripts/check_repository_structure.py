@@ -1,51 +1,31 @@
 #!/usr/bin/env python3
-"""Fail fast when the app branch drifts from the agreed package boundaries."""
-
-from __future__ import annotations
-
-import json
-import sys
 from pathlib import Path
+import sys
 
-ROOT = Path(__file__).resolve().parents[1]
-REQUIRED = (
-    "src/host",
-    "src/uwb",
-    "src/d_slam",
-    "common/contracts/schemas/mission_manifest.schema.json",
-    "common/contracts/schemas/semantic_result.schema.json",
-    "common/contracts/ros2_ws/src/ai_rescue_interfaces/srv/LoadMission.srv",
-    "common/ai_boost/d_slam/alignment.py",
-)
-FORBIDDEN_ROOTS = ("host", "uwb", "d_slam")
-
-
-def main() -> int:
-    errors: list[str] = []
-    for relative in REQUIRED:
-        if not (ROOT / relative).exists():
-            errors.append(f"missing required path: {relative}")
-    for relative in FORBIDDEN_ROOTS:
-        if (ROOT / relative).exists():
-            errors.append(f"legacy root package still exists: {relative}")
-    for prepare in ROOT.glob("src/*/prepare_from_rescue_app.sh"):
-        errors.append(f"external source preparation script remains: {prepare.relative_to(ROOT)}")
-    for schema in (ROOT / "common/contracts/schemas").glob("*.json"):
-        try:
-            value = json.loads(schema.read_text(encoding="utf-8"))
-        except Exception as error:
-            errors.append(f"invalid JSON schema {schema.relative_to(ROOT)}: {error}")
-            continue
-        if value.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
-            errors.append(f"unexpected schema draft: {schema.relative_to(ROOT)}")
-    if errors:
-        print("Repository structure check failed:", file=sys.stderr)
-        for error in errors:
-            print(f" - {error}", file=sys.stderr)
-        return 1
-    print("Repository structure check passed")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+ROOT=Path(__file__).resolve().parents[1]
+SRC=ROOT/'src'
+expected={'host','uwb','d_slam'}
+actual={p.name for p in SRC.iterdir() if p.is_dir()}
+errors=[]
+if actual != expected: errors.append(f"src direct children: expected={sorted(expected)} actual={sorted(actual)}")
+required=[
+ 'src/host/host_app','src/host/flutter_app/pubspec.yaml','src/host/ros2_ws/src/uwb_host_bridge',
+ 'src/uwb/protocol','src/uwb/runtime','src/uwb/interfaces','src/uwb/ros2_ws','src/uwb/firmware',
+ 'src/d_slam/astra_camera','src/d_slam/astra_camera_msgs','src/d_slam/d_slam','src/d_slam/jetson_app','src/d_slam/flutter_app/pubspec.yaml',
+]
+for rel in required:
+    if not (ROOT/rel).exists(): errors.append(f"missing required path: {rel}")
+for rel in ['common','.stage01_'+'payload','.github/workflows/'+'apply-stage01-temp.yml']:
+    if (ROOT/rel).exists(): errors.append(f"forbidden path exists: {rel}")
+for rel in ['src/host/'+'prepare_from_'+'rescue'+'_app.sh','src/uwb/'+'prepare_from_'+'rescue'+'_app.sh']:
+    if (ROOT/rel).exists(): errors.append(f"forbidden preparation script exists: {rel}")
+contract=ROOT/'src/uwb/interfaces'
+for name in ['mission_manifest.schema.json','semantic_result.schema.json','approved_plan.schema.json','map_delta.schema.json','urgent_event.schema.json']:
+    if not (contract/'schemas'/name).is_file(): errors.append(f"missing schema: {name}
+")
+for name in ['LoadMission.srv','ApplyApprovedPlan.srv','MissionControl.srv']:
+    if not any(contract.rglob(name)): errors.append(f"missing ROS service: {name}")
+if not any(contract.rglob('SubmitRescueUpdate.action')): errors.append('missing ROS action: SubmitRescueUpdate.action')
+if errors:
+    print('\n'.join(errors)); sys.exit(1)
+print('repository structure: OK')

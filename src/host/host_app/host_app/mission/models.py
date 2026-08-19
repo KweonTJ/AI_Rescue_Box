@@ -239,8 +239,8 @@ class MissionManifest:
             raise ValidationError("available teams or rescuers must be greater than zero")
         object.__setattr__(self, "available_teams", teams)
         object.__setattr__(self, "available_rescuers", rescuers)
-        if not isinstance(self.coordinate_frame, str) or not self.coordinate_frame:
-            raise ValidationError("coordinate_frame is required")
+        if self.coordinate_frame != "mission_map":
+            raise ValidationError("coordinate_frame must be mission_map")
         if self.units not in {"meters", "m"}:
             raise ValidationError("units must be meters")
         object.__setattr__(self, "units", "meters")
@@ -304,7 +304,7 @@ class MissionManifest:
                 "coordinate_frame",
                 data.get(
                     "coordinate_system",
-                    transform.get("frame_id", "map") if isinstance(transform, Mapping) else "map",
+                    transform.get("frame_id", "mission_map") if isinstance(transform, Mapping) else "mission_map",
                 ),
             ),
             units=data.get("units", "meters"),
@@ -390,7 +390,9 @@ class SemanticResult:
         positive_int(result.get("slam_map_version"), "slam_map_version")
         validate_timestamp(result.get("created_at"), "created_at")
         confidence(result.get("confidence"), "confidence")
-        for field_name in ("coordinate_frame", "units", "source"):
+        if result.get("coordinate_frame") != "mission_map":
+            raise ValidationError("coordinate_frame must be mission_map")
+        for field_name in ("units", "source"):
             field_value = result.get(field_name)
             if not isinstance(field_value, str) or not field_value.strip():
                 raise ValidationError(f"{field_name} is required")
