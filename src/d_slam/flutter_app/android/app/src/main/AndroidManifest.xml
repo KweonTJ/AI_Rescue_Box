@@ -3,12 +3,15 @@
 
     <!--
       The product path talks to a user-selected Jetson on a private local network.
-      Cleartext is permitted for that local HTTP development/product link; no
-      custom trust-all CA or certificate bypass is installed.
+      Cleartext is permitted for that local HTTP link; no custom trust-all CA or
+      certificate bypass is installed.
     -->
     <application
         android:label="AI Rescue Box"
         android:usesCleartextTraffic="true">
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
         <activity
             android:name=".MainActivity"
             android:exported="true">
