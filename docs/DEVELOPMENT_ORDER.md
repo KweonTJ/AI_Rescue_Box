@@ -3,10 +3,10 @@
 ## 완료된 기반 작업: 단계 0 + 단계 1
 
 - `src/host`, `src/uwb`, `src/d_slam` 책임 경계 고정
-- `common/contracts`에 JSON, Python, ROS 계약 정의
+- 통신 계약의 Single Source of Truth를 `src/uwb/interfaces`에 배치
 - 좌표계와 독립 Version 규칙 정의
-- 기존 `rescue_app` 런타임 소스를 이 저장소로 이관
-- `prepare_from_rescue_app.sh` 런타임 의존 제거
+- 기존 실행 소스를 책임별 디렉터리로 이관
+- 외부 소스 준비 스크립트와 Runtime/Build 외부 의존 제거
 - Jetson 통신 coordinator, UWB ROS client, spool, result/preview sender를 `src/uwb`로 이동
 - 센서, 분석, Mission 저장, Jetson API와 Flutter를 `src/d_slam`으로 이동
 

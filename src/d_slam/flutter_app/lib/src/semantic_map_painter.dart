@@ -57,7 +57,9 @@ class _SemanticMapPainter {
       final points = polygon.map(_screenFromMission).whereType<Offset>().toList();
       if (points.isEmpty) continue;
       final path = Path()..moveTo(points.first.dx, points.first.dy);
-      for (final point in points.skip(1)) path.lineTo(point.dx, point.dy);
+      for (final point in points.skip(1)) {
+        path.lineTo(point.dx, point.dy);
+      }
       if (points.length >= 3) path.close();
       canvas.drawPath(
         path,
@@ -107,7 +109,9 @@ class _SemanticMapPainter {
   void _drawPolyline(Canvas canvas, List<Offset> points, Color color, double width) {
     if (points.length < 2) return;
     final path = Path()..moveTo(points.first.dx, points.first.dy);
-    for (final point in points.skip(1)) path.lineTo(point.dx, point.dy);
+    for (final point in points.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
     canvas.drawPath(
       path,
       Paint()

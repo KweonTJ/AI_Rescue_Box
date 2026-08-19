@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rescue_api_client/rescue_api_client.dart';
-import 'package:rescue_api_client/src/backends.dart';
 import 'package:rescue_api_client/src/jetson_app.dart';
 import 'package:rescue_api_client/src/jetson_controller.dart';
 

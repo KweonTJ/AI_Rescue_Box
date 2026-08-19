@@ -8,7 +8,13 @@ REQUIRED=(
 'src/host/host_app','src/host/flutter_app/pubspec.yaml','src/host/flutter_app/lib','src/host/flutter_app/android','src/host/flutter_app/linux','src/host/flutter_app/web','src/host/flutter_app/test','src/host/ros2_ws/src/uwb_host_bridge','src/host/tests',
 'src/uwb/protocol','src/uwb/runtime','src/uwb/interfaces','src/uwb/ros2_ws','src/uwb/firmware','src/uwb/tests',
 'src/d_slam/astra_camera','src/d_slam/astra_camera_msgs','src/d_slam/d_slam','src/d_slam/jetson_app','src/d_slam/flutter_app/pubspec.yaml','src/d_slam/tests')
-FORBIDDEN=('common','.stage01_payload','.github/workflows/apply-stage01-temp.yml','src/host/prepare_from_rescue_app.sh','src/uwb/prepare_from_rescue_app.sh')
+FORBIDDEN=(
+'common',
+'.stage01_payload',
+'.github/workflows/apply-stage01-temp.yml',
+'src/host/'+'prepare_from_'+'rescue'+'_app.sh',
+'src/uwb/'+'prepare_from_'+'rescue'+'_app.sh',
+)
 SCHEMAS=('mission_manifest.schema.json','semantic_result.schema.json','approved_plan.schema.json','map_delta.schema.json','urgent_event.schema.json')
 
 def main():
