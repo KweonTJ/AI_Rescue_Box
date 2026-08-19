@@ -1,10 +1,10 @@
-"""Validated configuration loading with no hard-coded ROS topic dependency."""
+"""Validated Stage 3 configuration with no machine-specific hard-coding."""
 
 from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -20,11 +20,14 @@ PROTOCOL_MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
 
 @dataclass(frozen=True)
 class TopicConfig:
+    """Topics matching the repository's default Astra + RTAB-Map launch."""
+
     rgb: str = "/camera/color/image_raw"
-    depth: str = "/camera/depth_registered/image_raw"
-    camera_info: str = "/camera/depth_registered/camera_info"
-    point_cloud: str = "/camera/depth/points"
-    occupancy_grid: str = "/map"
+    depth: str = "/camera/depth/image_raw"
+    camera_info: str = "/camera/color/camera_info"
+    point_cloud: str = ""
+    occupancy_grid: str = "/rtabmap/map"
+    odometry: str = "/rtabmap/odom"
     robot_pose: str = "/rtabmap/localization_pose"
     rtabmap_status: str = "/rtabmap/info"
     received_artifact: str = "/uwb/received_artifact"
@@ -42,6 +45,16 @@ class AppConfig:
     data_root: Path = Path("data")
     model_path: Path | None = None
     detection_confidence: float = 0.5
+    depth_minimum_m: float = 0.15
+    depth_maximum_m: float = 10.0
+    sensor_sync_tolerance_s: float = 0.25
+    slam_map_frame: str = "map"
+    slam_odom_frame: str = "odom"
+    confirmation_observations: int = 2
+    mission_transform_mode: str = "initial_anchor"
+    mission_transform_x_m: float | None = None
+    mission_transform_y_m: float | None = None
+    mission_transform_yaw_radians: float | None = None
     map_preview_interval_seconds: float = 60.0
     map_preview_max_dimension: int = 768
     max_map_bytes: int = 10 * 1024 * 1024
@@ -69,6 +82,29 @@ class AppConfig:
             raise ConfigurationError("mode must be 'mock' or 'real'")
         if not 0.0 <= self.detection_confidence <= 1.0:
             raise ConfigurationError("detection_confidence must be in [0, 1]")
+        if self.depth_minimum_m <= 0 or self.depth_maximum_m <= self.depth_minimum_m:
+            raise ConfigurationError("depth range must be positive and increasing")
+        if self.sensor_sync_tolerance_s < 0:
+            raise ConfigurationError("sensor_sync_tolerance_s cannot be negative")
+        if not self.slam_map_frame or not self.slam_odom_frame:
+            raise ConfigurationError("SLAM frame names must be non-empty")
+        if self.confirmation_observations < 2:
+            raise ConfigurationError("confirmation_observations must be at least two")
+        if self.mission_transform_mode not in {"initial_anchor", "configured"}:
+            raise ConfigurationError(
+                "mission_transform_mode must be initial_anchor or configured"
+            )
+        configured_transform = (
+            self.mission_transform_x_m,
+            self.mission_transform_y_m,
+            self.mission_transform_yaw_radians,
+        )
+        if self.mission_transform_mode == "configured" and any(
+            value is None for value in configured_transform
+        ):
+            raise ConfigurationError(
+                "configured mission transform requires x, y and yaw"
+            )
         if self.map_preview_interval_seconds < 0:
             raise ConfigurationError("map preview interval cannot be negative")
         if self.map_preview_max_dimension <= 0:
@@ -91,7 +127,9 @@ class AppConfig:
         if self.sensor_risk_cell_size_m <= 0:
             raise ConfigurationError("sensor_risk_cell_size_m must be positive")
         if self.sensor_risk_min_points_per_cell < 2:
-            raise ConfigurationError("sensor_risk_min_points_per_cell must be at least two")
+            raise ConfigurationError(
+                "sensor_risk_min_points_per_cell must be at least two"
+            )
         if self.sensor_risk_debris_minimum_points < self.sensor_risk_min_points_per_cell:
             raise ConfigurationError(
                 "sensor_risk_debris_minimum_points cannot be below the cell minimum"
@@ -110,6 +148,9 @@ class AppConfig:
             raise ConfigurationError(
                 "prior_map_dark_pixel_threshold must be in [0, 255]"
             )
+        for name in ("rgb", "depth", "camera_info", "occupancy_grid", "odometry"):
+            if not getattr(self.topics, name):
+                raise ConfigurationError(f"topics.{name} must be non-empty")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "AppConfig":
@@ -131,6 +172,32 @@ class AppConfig:
             data_root=Path(value.get("data_root", "data")).expanduser(),
             model_path=Path(model_path).expanduser() if model_path else None,
             detection_confidence=float(value.get("detection_confidence", 0.5)),
+            depth_minimum_m=float(value.get("depth_minimum_m", 0.15)),
+            depth_maximum_m=float(value.get("depth_maximum_m", 10.0)),
+            sensor_sync_tolerance_s=float(
+                value.get("sensor_sync_tolerance_s", 0.25)
+            ),
+            slam_map_frame=str(value.get("slam_map_frame", "map")),
+            slam_odom_frame=str(value.get("slam_odom_frame", "odom")),
+            confirmation_observations=int(value.get("confirmation_observations", 2)),
+            mission_transform_mode=str(
+                value.get("mission_transform_mode", "initial_anchor")
+            ),
+            mission_transform_x_m=(
+                float(value["mission_transform_x_m"])
+                if value.get("mission_transform_x_m") is not None
+                else None
+            ),
+            mission_transform_y_m=(
+                float(value["mission_transform_y_m"])
+                if value.get("mission_transform_y_m") is not None
+                else None
+            ),
+            mission_transform_yaw_radians=(
+                float(value["mission_transform_yaw_radians"])
+                if value.get("mission_transform_yaw_radians") is not None
+                else None
+            ),
             map_preview_interval_seconds=float(
                 value.get("map_preview_interval_seconds", 60.0)
             ),
@@ -187,7 +254,7 @@ class AppConfig:
 
 def default_config_path() -> Path:
     candidates = [
-        Path(__file__).resolve().parent.parent / "config" / "default.yaml",
+        Path(__file__).resolve().parents[2] / "config" / "default.yaml",
         Path(sys.prefix) / "share" / "jetson_app" / "config" / "default.yaml",
     ]
     try:
@@ -201,8 +268,64 @@ def default_config_path() -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate
-    # Keep a deterministic path in the resulting error message.
     return candidates[0]
+
+
+def _env_float(name: str) -> float | None:
+    value = os.environ.get(name)
+    return float(value) if value not in {None, ""} else None
+
+
+def _apply_environment(config: AppConfig) -> AppConfig:
+    """Overlay only hardware/runtime values that are useful on the Jetson."""
+
+    topic_updates = {}
+    for field_name, env_name in {
+        "rgb": "AI_RESCUE_RGB_TOPIC",
+        "depth": "AI_RESCUE_DEPTH_TOPIC",
+        "camera_info": "AI_RESCUE_CAMERA_INFO_TOPIC",
+        "point_cloud": "AI_RESCUE_POINT_CLOUD_TOPIC",
+        "occupancy_grid": "AI_RESCUE_RTAB_MAP_TOPIC",
+        "odometry": "AI_RESCUE_RTAB_ODOM_TOPIC",
+        "robot_pose": "AI_RESCUE_RTAB_POSE_TOPIC",
+        "rtabmap_status": "AI_RESCUE_RTAB_STATUS_TOPIC",
+    }.items():
+        if env_name in os.environ:
+            topic_updates[field_name] = os.environ[env_name].strip()
+    topics = replace(config.topics, **topic_updates) if topic_updates else config.topics
+
+    model_value = os.environ.get("AI_RESCUE_YOLO_MODEL")
+    transform_mode = os.environ.get(
+        "AI_RESCUE_MISSION_TRANSFORM_MODE", config.mission_transform_mode
+    ).strip()
+    values: dict[str, Any] = {
+        "topics": topics,
+        "mode": os.environ.get("AI_RESCUE_ANALYSIS_MODE", config.mode).strip(),
+        "model_path": (
+            Path(model_value).expanduser() if model_value else config.model_path
+        ),
+        "slam_map_frame": os.environ.get(
+            "AI_RESCUE_SLAM_MAP_FRAME", config.slam_map_frame
+        ).strip(),
+        "slam_odom_frame": os.environ.get(
+            "AI_RESCUE_SLAM_ODOM_FRAME", config.slam_odom_frame
+        ).strip(),
+        "mission_transform_mode": transform_mode,
+    }
+    floats = {
+        "detection_confidence": "AI_RESCUE_YOLO_CONFIDENCE",
+        "depth_minimum_m": "AI_RESCUE_DEPTH_MIN_M",
+        "depth_maximum_m": "AI_RESCUE_DEPTH_MAX_M",
+        "sensor_sync_tolerance_s": "AI_RESCUE_SENSOR_SYNC_TOLERANCE_S",
+        "mission_transform_x_m": "AI_RESCUE_MISSION_TRANSFORM_X_M",
+        "mission_transform_y_m": "AI_RESCUE_MISSION_TRANSFORM_Y_M",
+        "mission_transform_yaw_radians": "AI_RESCUE_MISSION_TRANSFORM_YAW_RAD",
+    }
+    for field_name, env_name in floats.items():
+        parsed = _env_float(env_name)
+        if parsed is not None:
+            values[field_name] = parsed
+    return replace(config, **values)
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -213,4 +336,4 @@ def load_config(path: Path | None = None) -> AppConfig:
         value = yaml.safe_load(selected.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as error:
         raise ConfigurationError(f"could not load {selected}: {error}") from error
-    return AppConfig.from_mapping(value)
+    return _apply_environment(AppConfig.from_mapping(value))

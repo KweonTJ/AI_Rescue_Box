@@ -30,7 +30,14 @@ class OccupancyPreviewRenderer:
         self.occupied_threshold = occupied_threshold
         self.max_dimension = max_dimension
 
-    def render(self, snapshot: SlamSnapshot, *, mission_id: str | None = None, base_map_version: int | None = None, artifact_version: int | None = None) -> RenderedMapPreview:
+    def render(
+        self,
+        snapshot: SlamSnapshot,
+        *,
+        mission_id: str | None = None,
+        base_map_version: int | None = None,
+        artifact_version: int | None = None,
+    ) -> RenderedMapPreview:
         grid = snapshot.occupancy_grid
         scale = max(1, math.ceil(max(grid.width, grid.height) / self.max_dimension))
         width = math.ceil(grid.width / scale)
@@ -38,10 +45,18 @@ class OccupancyPreviewRenderer:
         pixels = []
         for image_y in range(height):
             block_y = height - image_y - 1
-            y_start, y_stop = block_y * scale, min(grid.height, (block_y + 1) * scale)
+            y_start, y_stop = block_y * scale, min(
+                grid.height, (block_y + 1) * scale
+            )
             for image_x in range(width):
-                x_start, x_stop = image_x * scale, min(grid.width, (image_x + 1) * scale)
-                values = [grid.value(x, y) for y in range(y_start, y_stop) for x in range(x_start, x_stop)]
+                x_start, x_stop = image_x * scale, min(
+                    grid.width, (image_x + 1) * scale
+                )
+                values = [
+                    grid.value(x, y)
+                    for y in range(y_start, y_stop)
+                    for x in range(x_start, x_stop)
+                ]
                 if any(value >= self.occupied_threshold for value in values):
                     color = self.OCCUPIED_COLOR
                 elif any(value == -1 for value in values):
@@ -53,15 +68,27 @@ class OccupancyPreviewRenderer:
                 pixels.append(color)
         image = Image.new("RGB", (width, height))
         image.putdata(pixels)
-        geometry = f"{width}x{height}|{grid.width}x{grid.height}|{grid.resolution:.17g}|{grid.origin.x:.17g},{grid.origin.y:.17g}|{grid.frame_id}|threshold={self.occupied_threshold}".encode()
+        geometry = (
+            f"{width}x{height}|{grid.width}x{grid.height}|{grid.resolution:.17g}|"
+            f"{grid.origin.x:.17g},{grid.origin.y:.17g}|{grid.frame_id}|"
+            f"threshold={self.occupied_threshold}|block={scale}"
+        ).encode()
         signature = hashlib.sha256(geometry + b"\0" + image.tobytes()).hexdigest()
         metadata = PngImagePlugin.PngInfo()
         metadata.add_text("frame_id", grid.frame_id)
         metadata.add_text("map_version", str(snapshot.map_version))
         metadata.add_text("content_signature", signature)
-        if mission_id is not None: metadata.add_text("mission_id", mission_id)
-        if base_map_version is not None: metadata.add_text("base_map_version", str(base_map_version))
-        if artifact_version is not None: metadata.add_text("artifact_version", str(artifact_version))
+        metadata.add_text("source_grid_size", f"{grid.width}x{grid.height}")
+        metadata.add_text("downsample_block", str(scale))
+        metadata.add_text("resolution_m_per_cell", f"{grid.resolution:.17g}")
+        metadata.add_text("origin_x_m", f"{grid.origin.x:.17g}")
+        metadata.add_text("origin_y_m", f"{grid.origin.y:.17g}")
+        if mission_id is not None:
+            metadata.add_text("mission_id", mission_id)
+        if base_map_version is not None:
+            metadata.add_text("base_map_version", str(base_map_version))
+        if artifact_version is not None:
+            metadata.add_text("artifact_version", str(artifact_version))
         output = io.BytesIO()
         image.save(output, format="PNG", pnginfo=metadata, compress_level=9)
         return RenderedMapPreview(output.getvalue(), signature, width, height)

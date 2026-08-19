@@ -58,6 +58,8 @@ jobs:
         run: python3 -m pytest -q src/d_slam/tests
       - name: Stage 2 E2E
         run: python3 -m pytest -q tests/stage2/e2e/test_stage2_e2e.py
+      - name: Stage 3 Analysis Integration
+        run: python3 -m pytest -q tests/stage3
       - name: ROS availability
         run: |
           if command -v colcon >/dev/null 2>&1 && [[ -n "${ROS_DISTRO:-}" ]]; then

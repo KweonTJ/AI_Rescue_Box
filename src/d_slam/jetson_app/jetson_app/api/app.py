@@ -7,8 +7,16 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from ..config import load_config
+from ..map_preview import OccupancyPreviewRenderer
 from ..mission import MissionManager
-from .service import ApiConflictError, ApiNotFoundError, ApiUnavailableError, JetsonApiService
+from ..runtime import Stage3Runtime
+from .service import (
+    ApiConflictError,
+    ApiNotFoundError,
+    ApiUnavailableError,
+    JetsonApiService,
+)
 
 
 class SendRequest(BaseModel):
@@ -16,11 +24,37 @@ class SendRequest(BaseModel):
 
 
 def create_app(service: JetsonApiService | None = None) -> FastAPI:
+    runtime: Stage3Runtime | None = None
     if service is None:
-        root = Path(os.environ.get("AI_RESCUE_DATA_ROOT", "data"))
-        service = JetsonApiService(MissionManager(root / "missions"))
+        config = load_config()
+        data_root = Path(
+            os.environ.get("AI_RESCUE_DATA_ROOT", str(config.data_root))
+        ).expanduser()
+        runtime = Stage3Runtime(config)
+        service = JetsonApiService(
+            MissionManager(
+                data_root / "missions",
+                max_map_bytes=config.max_map_bytes,
+                max_json_bytes=config.max_json_bytes,
+            ),
+            pipeline=runtime.pipeline,
+            preview_renderer=OccupancyPreviewRenderer(
+                occupied_threshold=config.occupied_threshold,
+                max_dimension=config.map_preview_max_dimension,
+            ),
+            candidate_source=runtime.candidate_source,
+            mode=config.mode,
+            provider_status_source=runtime.component_status,
+            analysis_readiness=runtime.ensure_analysis_ready,
+            mission_reset=runtime.reset_mission,
+            map_alignment_source=runtime.map_alignment_for,
+        )
 
     app = FastAPI(title="AI Rescue Box Jetson API", version="1.0.0")
+
+    if runtime is not None:
+        app.add_event_handler("startup", runtime.start)
+        app.add_event_handler("shutdown", runtime.stop)
 
     def call(function, *args, **kwargs):
         try:

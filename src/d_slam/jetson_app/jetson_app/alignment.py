@@ -1,13 +1,135 @@
-"""Conservative prior-map versus observed-SLAM extent sanity checks."""
+"""Conservative Stage 3 mission-frame anchoring and prior-map sanity checks.
+
+The rigid transform in this module is deliberately *not* automatic map
+alignment.  Stage 3 only anchors the live RTAB-Map frame to the mission frame
+from either an explicit operator configuration or the mission-start pose.
+Feature/ICP alignment remains a Stage 4 responsibility.
+"""
 
 from __future__ import annotations
 
 import math
+import threading
 from dataclasses import dataclass
 from typing import Any
 
-from .domain import MissionManifest
+from .domain import MissionManifest, Point2D, Pose2D
 from .providers import SlamSnapshot
+
+
+def _normalize_yaw(value: float) -> float:
+    return math.atan2(math.sin(value), math.cos(value))
+
+
+@dataclass(frozen=True)
+class RigidMissionTransform:
+    """2-D ``T_mission_map_from_slam_map`` used only as a provisional anchor."""
+
+    translation_x_m: float
+    translation_y_m: float
+    yaw_radians: float
+    mode: str
+    status: str
+
+    def slam_to_mission_point(self, point: Point2D) -> Point2D:
+        cosine, sine = math.cos(self.yaw_radians), math.sin(self.yaw_radians)
+        return Point2D(
+            cosine * point.x - sine * point.y + self.translation_x_m,
+            sine * point.x + cosine * point.y + self.translation_y_m,
+        )
+
+    def mission_to_slam_point(self, point: Point2D) -> Point2D:
+        x = point.x - self.translation_x_m
+        y = point.y - self.translation_y_m
+        cosine, sine = math.cos(self.yaw_radians), math.sin(self.yaw_radians)
+        return Point2D(cosine * x + sine * y, -sine * x + cosine * y)
+
+    def slam_to_mission_pose(self, pose: Pose2D) -> Pose2D:
+        point = self.slam_to_mission_point(Point2D(pose.x, pose.y))
+        return Pose2D(point.x, point.y, _normalize_yaw(pose.yaw + self.yaw_radians))
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "status": self.status,
+            "automatic_map_alignment": False,
+            "stage4_alignment_required": True,
+            "T_mission_map_from_slam_map": {
+                "translation_x_m": self.translation_x_m,
+                "translation_y_m": self.translation_y_m,
+                "yaw_radians": self.yaw_radians,
+            },
+        }
+
+
+class ProvisionalMissionTransform:
+    """Resolve and cache the Stage 3 live-SLAM to mission-map transform."""
+
+    def __init__(
+        self,
+        *,
+        mode: str = "initial_anchor",
+        translation_x_m: float | None = None,
+        translation_y_m: float | None = None,
+        yaw_radians: float | None = None,
+    ) -> None:
+        if mode not in {"initial_anchor", "configured"}:
+            raise ValueError("mission transform mode must be initial_anchor or configured")
+        if mode == "configured" and any(
+            value is None
+            for value in (translation_x_m, translation_y_m, yaw_radians)
+        ):
+            raise ValueError("configured mission transform requires x, y and yaw")
+        self.mode = mode
+        self.translation_x_m = translation_x_m
+        self.translation_y_m = translation_y_m
+        self.yaw_radians = yaw_radians
+        self._lock = threading.RLock()
+        self._mission_key: tuple[str, int] | None = None
+        self._resolved: RigidMissionTransform | None = None
+
+    @staticmethod
+    def identity_for_mock() -> RigidMissionTransform:
+        return RigidMissionTransform(0.0, 0.0, 0.0, "mock_identity", "available")
+
+    def reset(self) -> None:
+        with self._lock:
+            self._mission_key = None
+            self._resolved = None
+
+    def resolve(
+        self, mission: MissionManifest, slam_start_pose: Pose2D
+    ) -> RigidMissionTransform:
+        if self.mode == "configured":
+            assert self.translation_x_m is not None
+            assert self.translation_y_m is not None
+            assert self.yaw_radians is not None
+            return RigidMissionTransform(
+                float(self.translation_x_m),
+                float(self.translation_y_m),
+                _normalize_yaw(float(self.yaw_radians)),
+                "configured",
+                "available",
+            )
+
+        key = (mission.mission_id, mission.mission_version)
+        with self._lock:
+            if self._mission_key == key and self._resolved is not None:
+                return self._resolved
+            yaw = _normalize_yaw(mission.robot_start.yaw - slam_start_pose.yaw)
+            cosine, sine = math.cos(yaw), math.sin(yaw)
+            rotated_x = cosine * slam_start_pose.x - sine * slam_start_pose.y
+            rotated_y = sine * slam_start_pose.x + cosine * slam_start_pose.y
+            resolved = RigidMissionTransform(
+                mission.robot_start.x - rotated_x,
+                mission.robot_start.y - rotated_y,
+                yaw,
+                "initial_anchor",
+                "provisional",
+            )
+            self._mission_key = key
+            self._resolved = resolved
+            return resolved
 
 
 @dataclass(frozen=True)
@@ -112,4 +234,8 @@ class PriorSlamAlignmentEvaluator:
         }
 
 
-__all__ = ["PriorSlamAlignmentEvaluator"]
+__all__ = [
+    "PriorSlamAlignmentEvaluator",
+    "ProvisionalMissionTransform",
+    "RigidMissionTransform",
+]

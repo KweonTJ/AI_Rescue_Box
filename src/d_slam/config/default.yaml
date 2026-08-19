@@ -2,7 +2,32 @@ mode: real
 data_root: data
 model_path: null
 detection_confidence: 0.5
+
+depth_minimum_m: 0.15
+depth_maximum_m: 10.0
+sensor_sync_tolerance_s: 0.25
+slam_map_frame: map
+slam_odom_frame: odom
+confirmation_observations: 2
+
+# Stage 3 only: initial live-SLAM pose is anchored to mission robot_start.
+# Set mode=configured with x/y/yaw only for an explicitly measured transform.
+mission_transform_mode: initial_anchor
+mission_transform_x_m: null
+mission_transform_y_m: null
+mission_transform_yaw_radians: null
+
 map_preview_interval_seconds: 60
 map_preview_max_dimension: 768
 occupied_threshold: 65
 minimum_passage_width_m: 0.8
+
+topics:
+  rgb: /camera/color/image_raw
+  depth: /camera/depth/image_raw
+  camera_info: /camera/color/camera_info
+  point_cloud: ""
+  occupancy_grid: /rtabmap/map
+  odometry: /rtabmap/odom
+  robot_pose: /rtabmap/localization_pose
+  rtabmap_status: /rtabmap/info
