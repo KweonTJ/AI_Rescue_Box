@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -50,11 +51,21 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
             map_alignment_source=runtime.map_alignment_for,
         )
 
-    app = FastAPI(title="AI Rescue Box Jetson API", version="1.0.0")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if runtime is not None:
+            runtime.start()
+        try:
+            yield
+        finally:
+            if runtime is not None:
+                runtime.stop()
 
-    if runtime is not None:
-        app.add_event_handler("startup", runtime.start)
-        app.add_event_handler("shutdown", runtime.stop)
+    app = FastAPI(
+        title="AI Rescue Box Jetson API",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
 
     def call(function, *args, **kwargs):
         try:
