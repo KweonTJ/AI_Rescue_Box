@@ -1,0 +1,2 @@
+from .detector import ConfiguredPersonDetectionProvider, OpenCvYoloPersonDetectionProvider
+from .fusion import fuse_detection
