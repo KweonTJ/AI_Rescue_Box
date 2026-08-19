@@ -32,9 +32,11 @@ def validate_semantic_result(value: Mapping[str, Any], expected_mission_id: str 
     if result.get("units") not in {"meters", "m"}: raise ValidationError("semantic_result units must be meters")
     source = result.get("source")
     if not isinstance(source, str) or not source: raise ValidationError("source must be a non-empty string")
-    mode = result.get("analysis_mode")
-    if mode not in {"real", "mock"}: raise ValidationError("analysis_mode must be real or mock")
-    if ("mock" in source.lower()) != (mode == "mock"): raise ValidationError("semantic_result source must agree with analysis_mode")
+    mode = result.get("analysis_mode", "unknown")
+    if mode not in {"real", "mock", "unknown"}: raise ValidationError("analysis_mode must be real, mock or unknown")
+    result.setdefault("analysis_mode", mode)
+    if mode != "unknown" and (("mock" in source.lower()) != (mode == "mock")):
+        raise ValidationError("semantic_result source must agree with analysis_mode")
     for field in ("robot_pose", "robot_trajectory", "victim_candidates", "confirmed_victims", "obstacles", "risk_zones", "entry_routes", "team_recommendations", "safe_waiting_points", "explored_areas", "unknown_areas"):
         if field not in result: raise ValidationError(f"semantic_result is missing {field}")
         if field != "robot_pose": _array(result[field], field)
