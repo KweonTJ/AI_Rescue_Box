@@ -92,6 +92,10 @@ class SlamSnapshot:
     tracking_status: str
     map_version: int
     timestamp: str = field(default_factory=utc_now)
+    # Risk evidence derived from a real Depth/PointCloud frame.  Keeping it in
+    # the immutable snapshot makes the existing AnalysisPipeline consume the
+    # evidence without coupling it to ROS message types.  An empty tuple means
+    # that no valid, map-frame sensor evidence is currently available.
     sensor_risks: tuple[RiskZone, ...] = ()
 
 
@@ -125,9 +129,13 @@ class DepthProvider(ABC):
         """Return a measured camera-frame point, or None for invalid depth."""
 
     def measurement_frame_id(self) -> str | None:
+        """Frame of the returned point, or ``None`` when no valid frame exists."""
+
         return None
 
     def measurement_image_size(self) -> tuple[int, int] | None:
+        """Pixel grid used by ``locate`` when it must align with RGB boxes."""
+
         return None
 
 

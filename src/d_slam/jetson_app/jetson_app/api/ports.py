@@ -1,0 +1,9 @@
+from __future__ import annotations
+from pathlib import Path
+from typing import Any, Mapping, Protocol, runtime_checkable
+
+@runtime_checkable
+class ArtifactTransportPort(Protocol):
+    def status(self) -> Mapping[str, Any]: ...
+    def send_semantic_result(self, result: Mapping[str, Any], artifact_path: Path, *, priority: int = 0) -> Mapping[str, Any]: ...
+    def send_map_preview(self, metadata: Mapping[str, Any], artifact_path: Path, *, priority: int = 0) -> Mapping[str, Any]: ...

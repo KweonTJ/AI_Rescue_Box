@@ -1,25 +1,125 @@
+"""Deterministic providers for tests and explicit Mock mode."""
+
 from __future__ import annotations
-from typing import Sequence
-from ..domain import OccupancyGrid, Point2D, Pose2D, RiskZone, TeamRecommendation
-from .base import ProviderMode, ProviderStatus, RiskAssessmentProvider, SlamProvider, SlamSnapshot, TeamRecommendationProvider
+
+from dataclasses import dataclass
+from typing import Mapping, Sequence
+
+from ..domain import (
+    BoundingBox,
+    CameraPoint,
+    OccupancyGrid,
+    PersonCandidate,
+    Point2D,
+    Pose2D,
+)
+from .base import (
+    DepthProvider,
+    Detection2D,
+    MapTransformer,
+    PersonDetectionProvider,
+    ProviderMode,
+    ProviderStatus,
+    RgbFrame,
+    SlamProvider,
+    SlamSnapshot,
+)
+
 
 class MockSlamProvider(SlamProvider):
     def __init__(self, snapshot: SlamSnapshot | None = None) -> None:
-        self._snapshot = snapshot or SlamSnapshot(OccupancyGrid(4,4,1.0,Point2D(0,0),(0,)*16), Pose2D(.5,.5,0), (Pose2D(.5,.5,0),), (), (), "tracking", 1)
-    def status(self) -> ProviderStatus: return ProviderStatus("SLAM", ProviderMode.MOCK, True, "deterministic mock")
-    def snapshot(self) -> SlamSnapshot: return self._snapshot
+        self._snapshot = snapshot or self.default_snapshot()
 
-class MockRiskProvider(RiskAssessmentProvider):
-    def __init__(self, risks: Sequence[RiskZone] = ()) -> None: self.risks=tuple(risks)
-    def assess(self, snapshot: SlamSnapshot): return self.risks or snapshot.sensor_risks
+    @staticmethod
+    def default_snapshot() -> SlamSnapshot:
+        width = height = 12
+        values = [0] * (width * height)
+        for y in range(2, 10):
+            if y != 6:
+                values[y * width + 5] = 100
+        for x in range(9, 12):
+            values[x] = -1
+        grid = OccupancyGrid(width, height, 0.5, Point2D(0, 0), tuple(values))
+        return SlamSnapshot(
+            occupancy_grid=grid,
+            robot_pose=Pose2D(1.25, 1.25, 0.0),
+            trajectory=(Pose2D(0.75, 0.75, 0.0), Pose2D(1.25, 1.25, 0.0)),
+            explored_areas=((Point2D(0, 0), Point2D(4.5, 0), Point2D(4.5, 6), Point2D(0, 6)),),
+            unknown_areas=((Point2D(4.5, 0), Point2D(6, 0), Point2D(6, 0.5), Point2D(4.5, 0.5)),),
+            tracking_status="mock_tracking",
+            map_version=1,
+        )
 
-class MockTeamProvider(TeamRecommendationProvider):
-    def recommend(self, *, team_count, rescuer_count, candidates, routes, waiting_points, priorities=None):
-        del rescuer_count, candidates, priorities
-        result=[]
-        for index in range(team_count):
-            route = routes[index] if index < len(routes) else None
-            if route is None and not waiting_points: break
-            position = route.start if route else waiting_points[min(index, len(waiting_points)-1)]
-            result.append(TeamRecommendation(f"team-{index+1:02d}", position, route.target_id if route else None, route.route_id if route else None, route.total_distance if route else 0.0, route.risk_cost if route else 0.0, "deterministic mock recommendation", 0.7))
-        return tuple(result)
+    def set_snapshot(self, snapshot: SlamSnapshot) -> None:
+        self._snapshot = snapshot
+
+    def status(self) -> ProviderStatus:
+        return ProviderStatus("Mock SLAM", ProviderMode.MOCK, True, "synthetic grid")
+
+    def snapshot(self) -> SlamSnapshot:
+        return self._snapshot
+
+
+class MockDetectionProvider(PersonDetectionProvider):
+    def __init__(self, detections: Sequence[Detection2D] = ()) -> None:
+        self.detections = tuple(detections)
+
+    def status(self) -> ProviderStatus:
+        return ProviderStatus(
+            "Mock person detector", ProviderMode.MOCK, True, "synthetic detections"
+        )
+
+    def detect(self, frame: RgbFrame) -> Sequence[Detection2D]:
+        return self.detections
+
+
+class MockDepthProvider(DepthProvider):
+    def __init__(
+        self,
+        locations: Mapping[str, CameraPoint | None] | None = None,
+        default: CameraPoint | None = None,
+    ) -> None:
+        self.locations = dict(locations or {})
+        self.default = default
+
+    def status(self) -> ProviderStatus:
+        return ProviderStatus("Mock depth", ProviderMode.MOCK, True, "synthetic depth")
+
+    def locate(self, detection: Detection2D) -> CameraPoint | None:
+        key = detection.tracking_id or detection.detection_id or ""
+        return self.locations.get(key, self.default)
+
+    def measurement_frame_id(self) -> str:
+        return "mock_camera_frame"
+
+
+def deterministic_mock_candidates() -> tuple[PersonCandidate, ...]:
+    """Stable fixture used only when an API process explicitly selects Mock."""
+
+    return (
+        PersonCandidate(
+            detection_id="mock-person-0001",
+            tracking_id="mock-track-0001",
+            class_name="person",
+            bbox=BoundingBox(120, 80, 64, 144),
+            confidence=0.91,
+            depth_valid=True,
+            camera_position=CameraPoint(0.25, 0.0, 2.25),
+            map_position=Point2D(2.25, 2.25),
+            detected_at="2026-01-01T00:00:00Z",
+            source="explicit_mock_fixture",
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class OffsetMapTransformer(MapTransformer):
+    """Deterministic camera X/Z to map X/Y transform for Mock mode."""
+
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+
+    def camera_to_map(
+        self, point: CameraPoint, *, timestamp: str, frame_id: str
+    ) -> Point2D:
+        return Point2D(point.x + self.offset_x, point.z + self.offset_y)
