@@ -1,0 +1,9 @@
+string transfer_id
+string artifact_type
+string mission_id
+int32 artifact_version
+string local_file_path
+int64 file_size
+string sha256
+string sender
+builtin_interfaces/Time received_at

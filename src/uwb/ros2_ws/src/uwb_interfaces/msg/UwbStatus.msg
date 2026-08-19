@@ -1,0 +1,13 @@
+string role
+bool bridge_running
+bool serial_connected
+bool peer_connected
+string transfer_state
+string transfer_id
+int64 bytes_sent
+int64 bytes_received
+int32 retransmission_count
+string last_error_code
+string last_error_message
+builtin_interfaces/Time last_tx_time
+builtin_interfaces/Time last_rx_time

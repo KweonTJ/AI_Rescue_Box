@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>uwb_host_bridge</name>
+  <version>0.1.0</version>
+  <description>Host-side ROS 2 bridge for the AI Rescue Box UWB link.</description>
+  <maintainer email="maintainer@example.com">AI Rescue Box Team</maintainer>
+  <license>Proprietary</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>ai_rescue_uwb_common</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>uwb_interfaces</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

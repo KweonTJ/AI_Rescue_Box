@@ -1,0 +1,5 @@
+string transfer_id
+int32[] chunk_indices
+---
+bool success
+string message

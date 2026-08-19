@@ -1,0 +1,4 @@
+string transfer_id
+---
+bool success
+string message

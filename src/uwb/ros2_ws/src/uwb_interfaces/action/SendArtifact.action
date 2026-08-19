@@ -1,0 +1,22 @@
+string local_file_path
+string artifact_type
+string mission_id
+int32 artifact_version
+string sha256
+uint8 priority
+---
+bool success
+string transfer_id
+bool uwb_frame_ack
+bool peer_saved
+bool application_ack
+string error_code
+string error_message
+---
+string transfer_id
+string stage
+int32 total_chunks
+int32 completed_chunks
+float32 progress
+int32 retransmission_count
+int64 bytes_sent
