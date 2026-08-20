@@ -1,5 +1,6 @@
 """Core API for the AI Rescue Box Host application."""
 
+from .ai_boost import ai_boost
 from .errors import (
     BridgeUnavailableError,
     HostAppError,
@@ -9,6 +10,7 @@ from .errors import (
 )
 
 __all__ = [
+    "ai_boost",
     "BridgeUnavailableError",
     "HostAppError",
     "MapImportError",

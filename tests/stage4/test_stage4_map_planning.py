@@ -344,6 +344,8 @@ def test_stage4_semantic_preview_and_stage2_artifact_compatibility(tmp_path: Pat
     manifest_path.write_text(json.dumps(manifest_value), encoding="utf-8")
     manager = MissionManager(tmp_path / "missions")
     applied = manager.apply_mission(manifest_path, prior_source)
+    assert manager.current_mission_ref() is None
+    manager.set_current_mission("stage4-service", 1)
     mission = applied.manifest
     prior = PriorMapReference.from_image(mission, applied.base_map_path, dark_threshold=64, free_threshold=220)
     live = _transform_grid_from_prior(

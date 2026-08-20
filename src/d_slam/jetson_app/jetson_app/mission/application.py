@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..domain import MissionManifest
+from ..domain import MissionManifest, ValidationError
+from ..storage import sha256_file
 from .manager import MissionManager
 
 
@@ -43,12 +44,31 @@ class MissionApplicationService:
                 raise ValueError("LoadMission mission_id does not match manifest")
             if manifest.mission_version != int(mission_version):
                 raise ValueError("LoadMission mission_version does not match manifest")
+            # Application ACK means verified + safely STORED, not ACTIVE. If a
+            # previous ACK was lost, an identical retransmission is idempotent.
+            try:
+                existing = self.manager.load_mission(mission_id, int(mission_version))
+            except (ValidationError, OSError):
+                existing = None
+            if existing is not None:
+                if existing.manifest.to_dict() != manifest.to_dict():
+                    raise ValueError("stored mission version differs from retransmitted manifest")
+                if sha256_file(Path(base_map_path)) != manifest.base_map_sha256:
+                    raise ValueError("retransmitted base map SHA-256 differs from manifest")
+                return MissionApplicationResult(
+                    True, "STORED", "", "mission already verified and stored"
+                )
             self.manager.apply_mission(mission_manifest_path, base_map_path)
         except Exception as error:
             return MissionApplicationResult(
                 False, "REJECTED", type(error).__name__.upper(), str(error)
             )
-        return MissionApplicationResult(True, "READY", "", "mission verified and active")
+        return MissionApplicationResult(
+            True,
+            "STORED",
+            "",
+            "mission verified and stored; Tablet selection is required for ACTIVE",
+        )
 
     def apply_approved_plan(
         self,
@@ -67,9 +87,7 @@ class MissionApplicationService:
             if int(value.get("approved_plan_version", 0)) != int(approved_plan_version):
                 raise ValueError("ApplyApprovedPlan approved_plan_version does not match artifact")
             self.manager.apply_approved_plan(
-                mission_id,
-                int(mission_version),
-                Path(approved_plan_path),
+                mission_id, int(mission_version), Path(approved_plan_path)
             )
         except Exception as error:
             return MissionApplicationResult(

@@ -281,12 +281,19 @@ def test_stage2_round_trip_uses_real_protocol_runtime_and_application_ack(tmp_pa
         assert sent["result"]["base_map"]["remote_saved"] is True
         assert sent["result"]["base_map"]["application_ack"] is False
         assert sent["result"]["mission_manifest"]["application_ack"] is True
-        assert manager.current_mission_ref() == ("stage2-e2e", 1)
+        # UWB completion now means verified + STORED. It must not switch the
+        # Jetson ACTIVE mission behind the Tablet operator's back.
+        assert manager.current_mission_ref() is None
         assert trace.index("load_mission") < next(
             index for index, item in enumerate(trace) if item.endswith(":True")
         )
 
-        tablet_service = JetsonApiService(MissionManager(tmp_path / "jetson_data" / "missions"), mode="mock")
+        tablet_service = JetsonApiService(
+            MissionManager(tmp_path / "jetson_data" / "missions"), mode="mock"
+        )
+        assert tablet_service.list_missions()[0]["active"] is False
+        tablet_service.select_mission("stage2-e2e", 1)
+        assert manager.current_mission_ref() == ("stage2-e2e", 1)
         tablet_mission = tablet_service.current_mission()
         assert tablet_mission["mission_id"] == manifest["mission_id"]
         assert tablet_mission["mission_version"] == manifest["mission_version"]

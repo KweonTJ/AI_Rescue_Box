@@ -19,6 +19,7 @@ from .managed_serial import (
     SerialTransportStatus,
     discover_serial_ports,
 )
+from . import protocol as _protocol
 from .protocol import (
     ACK_STAGE_APPLIED,
     ACK_STAGE_STORED,
@@ -54,6 +55,13 @@ from .transport import (
     SendReceipt,
     TransportError,
     create_memory_link,
+)
+
+# Backward-compatible protocol extension. Existing wire framing/version stays
+# unchanged; only two semantic artifact tokens that already have contracts in
+# src/uwb/interfaces/schemas are admitted by ArtifactMetadata validation.
+_protocol.KNOWN_ARTIFACT_TYPES = _protocol.KNOWN_ARTIFACT_TYPES | frozenset(
+    {"map_delta", "urgent_event"}
 )
 
 __all__ = [

@@ -4,6 +4,7 @@ Hardware integrations are imported lazily so domain logic and tests work on
 machines without ROS 2, Astra, RTAB-Map, CUDA, or a display server.
 """
 
+from .ai_boost import ai_boost
 from .domain import (
     MissionManifest,
     ObservationState,
@@ -18,6 +19,7 @@ from .domain import (
 )
 
 __all__ = [
+    "ai_boost",
     "MissionManifest",
     "ObservationState",
     "OccupancyGrid",

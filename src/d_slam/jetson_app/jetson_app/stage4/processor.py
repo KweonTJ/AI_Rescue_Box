@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
+from ..ai_boost import ai_boost
 from ..alignment import RigidMissionTransform
 from ..domain import MissionManifest, RiskZone
 from ..providers import SlamSnapshot
@@ -43,9 +44,22 @@ class Stage4Processor:
             dark_threshold=self.config.prior_dark_threshold,
             free_threshold=self.config.prior_free_threshold,
         )
-        alignment = self.aligner.align(mission, prior, snapshot, initial)
-        change = self.change_builder.build(prior, snapshot, alignment)
-        traversability = self.traversability_builder.build(
-            prior, snapshot, alignment, change, risks
+        alignment = ai_boost(
+            "prior_live_alignment",
+            lambda: self.aligner.align(mission, prior, snapshot, initial),
+            enabled=False,
+            context={"mission_id": mission.mission_id, "map_version": snapshot.map_version},
+        )
+        change = ai_boost(
+            "structural_change_analysis",
+            lambda: self.change_builder.build(prior, snapshot, alignment),
+            enabled=False,
+            context={"mission_id": mission.mission_id},
+        )
+        traversability = ai_boost(
+            "traversability",
+            lambda: self.traversability_builder.build(prior, snapshot, alignment, change, risks),
+            enabled=False,
+            context={"mission_id": mission.mission_id},
         )
         return Stage4Artifacts(prior, alignment, change, traversability)

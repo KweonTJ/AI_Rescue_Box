@@ -1,9 +1,7 @@
 """ROS 2 process joining the UWB bridge to d_slam for Stage 2.
 
-Run beside the existing ``uwb_jetson_bridge`` and d_slam mission service node.
-It subscribes to completed UWB artifacts, calls only the public d_slam ROS
-services, and exposes the existing SubmitRescueUpdate action for the reverse
-result/preview path.
+It owns the Jetson disk-backed semantic outbox. Existing SubmitRescueUpdate
+remains as a diagnostic/manual compatibility path.
 """
 from __future__ import annotations
 
@@ -21,14 +19,12 @@ from .stage2 import ApplicationResult, JetsonStage2Runtime
 def _await_future(future: Any, timeout: float, label: str) -> Any:
     event = threading.Event()
     box: dict[str, Any] = {}
-
     def done(completed: Any) -> None:
         try:
             box["result"] = completed.result()
         except Exception as error:
             box["error"] = error
         event.set()
-
     future.add_done_callback(done)
     if not event.wait(timeout):
         raise TimeoutError(f"{label} timed out")
@@ -52,33 +48,18 @@ def main() -> int:
         from uwb_interfaces.msg import ReceivedArtifact
         from uwb_interfaces.srv import AcknowledgeArtifact
     except ImportError as error:
-        raise RuntimeError(
-            "ROS 2, uwb_interfaces, or ai_rescue_interfaces are unavailable"
-        ) from error
+        raise RuntimeError("ROS 2, uwb_interfaces, or ai_rescue_interfaces are unavailable") from error
 
     class RosPorts:
         def __init__(self, node: Any, group: Any) -> None:
-            self.node = node
             self.SendArtifact = SendArtifact
             self.AcknowledgeArtifact = AcknowledgeArtifact
             self.LoadMission = LoadMission
             self.ApplyApprovedPlan = ApplyApprovedPlan
-            self.send_client = ActionClient(
-                node, SendArtifact, "/uwb/send_artifact", callback_group=group
-            )
-            self.ack_client = node.create_client(
-                AcknowledgeArtifact,
-                "/uwb/acknowledge_artifact",
-                callback_group=group,
-            )
-            self.load_client = node.create_client(
-                LoadMission, "/d_slam/load_mission", callback_group=group
-            )
-            self.plan_client = node.create_client(
-                ApplyApprovedPlan,
-                "/d_slam/apply_approved_plan",
-                callback_group=group,
-            )
+            self.send_client = ActionClient(node, SendArtifact, "/uwb/send_artifact", callback_group=group)
+            self.ack_client = node.create_client(AcknowledgeArtifact, "/uwb/acknowledge_artifact", callback_group=group)
+            self.load_client = node.create_client(LoadMission, "/d_slam/load_mission", callback_group=group)
+            self.plan_client = node.create_client(ApplyApprovedPlan, "/d_slam/apply_approved_plan", callback_group=group)
 
         def acknowledge(self, transfer_id: str, *, applied: bool, error_message: str = "") -> None:
             if not self.ack_client.wait_for_service(timeout_sec=2.0):
@@ -87,9 +68,7 @@ def main() -> int:
             request.transfer_id = transfer_id
             request.applied = bool(applied)
             request.error_message = error_message
-            response = _await_future(
-                self.ack_client.call_async(request), 5.0, "application ACK"
-            )
+            response = _await_future(self.ack_client.call_async(request), 5.0, "application ACK")
             if not response.success:
                 raise RuntimeError(str(response.message))
 
@@ -156,25 +135,30 @@ def main() -> int:
             super().__init__("ai_rescue_jetson_stage2_runtime")
             group = ReentrantCallbackGroup()
             self._ports = RosPorts(self, group)
-            self._runtime = JetsonStage2Runtime(self._ports, self._ports, self._ports)
+            data_root = Path(os.environ.get("AI_RESCUE_DATA_ROOT", "data")).expanduser()
+            self._runtime = JetsonStage2Runtime(
+                self._ports, self._ports, self._ports, outbox_root=data_root / "uwb_outbox"
+            )
             qos = QoSProfile(depth=64)
             qos.reliability = ReliabilityPolicy.RELIABLE
             qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
             self._subscription = self.create_subscription(
-                ReceivedArtifact,
-                "/uwb/received_artifact",
-                self._received,
-                qos,
-                callback_group=group,
+                ReceivedArtifact, "/uwb/received_artifact", self._received, qos, callback_group=group
             )
             self._submit = ActionServer(
-                self,
-                SubmitRescueUpdate,
-                "/uwb/submit_rescue_update",
+                self, SubmitRescueUpdate, "/uwb/submit_rescue_update",
                 execute_callback=self._submit_update,
                 goal_callback=lambda _: GoalResponse.ACCEPT,
                 callback_group=group,
             )
+            self._queue = ActionServer(
+                self, SendArtifact, "/uwb/queue_artifact",
+                execute_callback=self._queue_artifact,
+                goal_callback=lambda _: GoalResponse.ACCEPT,
+                callback_group=group,
+            )
+            interval = float(os.environ.get("AI_RESCUE_UWB_OUTBOX_DRAIN_SECONDS", "1.0"))
+            self._drain_timer = self.create_timer(max(0.2, interval), self._drain_outbox, callback_group=group)
 
         def _received(self, message: object) -> None:
             artifact = ReceivedMissionArtifact(
@@ -186,9 +170,50 @@ def main() -> int:
                 sha256=str(message.sha256),
             )
             state = self._runtime.handle_received(artifact)
-            self.get_logger().info(
-                f"Stage 2 receive {artifact.artifact_type} {artifact.transfer_id}: {state}"
-            )
+            self.get_logger().info(f"Stage 2 receive {artifact.artifact_type} {artifact.transfer_id}: {state}")
+
+        def _queue_artifact(self, goal_handle: object) -> object:
+            request = goal_handle.request
+            result_message = SendArtifact.Result()
+            try:
+                source = Path(str(request.local_file_path)).resolve()
+                if not source.is_file():
+                    raise ValueError("queued artifact path does not exist")
+                digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                if str(request.sha256) != digest:
+                    raise ValueError("queued artifact SHA-256 differs from request")
+                outcome = dict(self._runtime.queue_artifact(
+                    source,
+                    artifact_type=str(request.artifact_type),
+                    mission_id=str(request.mission_id),
+                    artifact_version=int(request.artifact_version),
+                    priority=int(request.priority),
+                ))
+                result_message.success = True
+                result_message.transfer_id = str(outcome.get("transfer_id") or outcome.get("entry_id") or "")
+                result_message.uwb_frame_ack = bool(outcome.get("frame_ack", False))
+                result_message.peer_saved = bool(outcome.get("peer_stored_ack", False))
+                result_message.application_ack = bool(outcome.get("application_applied_ack", outcome.get("application_ack", False)))
+                result_message.error_code = str(outcome.get("error_code", ""))
+                result_message.error_message = str(outcome.get("error_message", ""))
+                goal_handle.succeed()
+            except Exception as error:
+                result_message.success = False
+                result_message.transfer_id = ""
+                result_message.uwb_frame_ack = False
+                result_message.peer_saved = False
+                result_message.application_ack = False
+                result_message.error_code = type(error).__name__.lower()
+                result_message.error_message = str(error)
+                goal_handle.abort()
+            return result_message
+
+        def _drain_outbox(self) -> None:
+            for outcome in self._runtime.drain_outbox(max_entries=8):
+                if outcome.get("error_message") and not (outcome.get("application_applied_ack") or outcome.get("application_ack")):
+                    self.get_logger().warning(
+                        f"outbox pending entry={outcome.get('entry_id')}: {outcome.get('error_message')}"
+                    )
 
         def _submit_update(self, goal_handle: object) -> object:
             result_message = SubmitRescueUpdate.Result()
@@ -205,17 +230,13 @@ def main() -> int:
                 preview = semantic.parent / "map_preview.png"
                 if not preview.is_file():
                     raise ValueError("map_preview.png is not stored beside semantic_result")
-                feedback = SubmitRescueUpdate.Feedback()
-                feedback.stage = "sending_semantic_result_and_preview"
-                feedback.progress = 0.25
-                goal_handle.publish_feedback(feedback)
                 first, second = self._runtime.return_analysis(semantic, preview)
-                feedback.stage = "completed"
-                feedback.progress = 1.0
-                goal_handle.publish_feedback(feedback)
                 result_message.accepted = True
-                result_message.transfer_id = f"{first.get('transfer_id','')}:{second.get('transfer_id','')}"
-                result_message.message = "semantic_result and map_preview delivered"
+                result_message.transfer_id = (
+                    f"{first.get('transfer_id', first.get('entry_id',''))}:"
+                    f"{second.get('transfer_id', second.get('entry_id',''))}"
+                )
+                result_message.message = "semantic_result and map_preview persisted to UWB outbox"
                 goal_handle.succeed()
             except Exception as error:
                 result_message.accepted = False

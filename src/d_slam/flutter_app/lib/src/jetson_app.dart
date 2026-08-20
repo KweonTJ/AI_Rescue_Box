@@ -12,6 +12,7 @@ part 'dashboard.dart';
 part 'mission_map_canvas.dart';
 part 'mission_panel.dart';
 part 'mission_projection.dart';
+part 'mission_selector.dart';
 part 'operation_panels.dart';
 part 'semantic_details.dart';
 part 'semantic_map_painter.dart';
@@ -28,6 +29,11 @@ final class RescueJetsonApp extends StatefulWidget {
 }
 
 class _RescueJetsonAppState extends State<RescueJetsonApp> {
+  // Deliberately starts at the selector on every Flutter cold launch. A
+  // previously ACTIVE Jetson mission may be labelled as current, but it never
+  // auto-navigates the operator past this explicit choice.
+  bool _showMissionSelector = true;
+
   @override
   void initState() {
     super.initState();
@@ -37,6 +43,38 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
 
   void _changed() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _selectMission(JsonMap mission) async {
+    final missionId = _asString(mission['mission_id']) ?? 'unknown';
+    final version = _asInt(mission['mission_version'] ?? mission['version']) ?? 0;
+    final name = _asString(mission['mission_name']) ?? missionId;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('이 구조도를 사용하시겠습니까?'),
+        content: Text('$name\n$missionId · v$version'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            key: const Key('mission-select-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('사용'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await widget.controller.selectMission(mission);
+    if (!mounted || widget.controller.error != null) return;
+    setState(() => _showMissionSelector = false);
+  }
+
+  void _chooseAnotherMission() {
+    setState(() => _showMissionSelector = true);
   }
 
   @override
@@ -64,7 +102,15 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
         ),
         useMaterial3: true,
       ),
-      home: _Dashboard(controller: widget.controller),
+      home: _showMissionSelector
+          ? _MissionSelector(
+              controller: widget.controller,
+              onSelect: _selectMission,
+            )
+          : _Dashboard(
+              controller: widget.controller,
+              onChooseAnotherMission: _chooseAnotherMission,
+            ),
     );
   }
 }

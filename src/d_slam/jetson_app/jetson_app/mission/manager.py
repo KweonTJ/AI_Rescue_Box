@@ -1,5 +1,4 @@
-"""Apply verified mission artifacts without overwriting prior versions."""
-
+"""Store verified mission artifacts without overwriting prior versions."""
 from __future__ import annotations
 
 import json
@@ -18,7 +17,6 @@ from ..domain import MissionManifest, StaleVersionError, ValidationError, utc_no
 from ..storage import atomic_copy, atomic_write_json, sha256_file
 from .artifacts import validate_approved_plan, validate_semantic_result
 
-
 VERSION_DIR_RE = re.compile(r"v([1-9][0-9]*)\Z")
 RESULT_RE = re.compile(r"semantic_result_v([1-9][0-9]*)\.json\Z")
 PLAN_RE = re.compile(r"approved_plan_v([1-9][0-9]*)\.json\Z")
@@ -35,7 +33,11 @@ class AppliedMission:
 
 
 class MissionManager:
-    """Version-aware mission repository rooted at ``data/missions``."""
+    """Version-aware mission repository rooted at ``data/missions``.
+
+    ``apply_mission`` only verifies/stores. ``set_current_mission`` is the
+    explicit Tablet selection/ACTIVE boundary.
+    """
 
     def __init__(
         self,
@@ -106,7 +108,7 @@ class MissionManager:
         self.root.mkdir(parents=True, exist_ok=True)
         atomic_write_json(
             self._current_path(),
-            {"mission_id": value[0], "mission_version": value[1], "state": "READY"},
+            {"mission_id": value[0], "mission_version": value[1], "state": "ACTIVE"},
         )
         return value
 
@@ -154,6 +156,7 @@ class MissionManager:
         return image_format
 
     def apply_mission(self, manifest_path: Path, base_map_path: Path) -> AppliedMission:
+        """Verify and store a mission version without changing ACTIVE mission."""
         manifest_source = Path(manifest_path)
         base_map_source = Path(base_map_path)
         manifest = MissionManifest.from_dict(self._read_json(manifest_source))
@@ -178,8 +181,10 @@ class MissionManager:
                 atomic_copy(base_map_source, stored_map, self.max_map_bytes)
                 stored_manifest = staging / "mission_manifest.json"
                 atomic_write_json(stored_manifest, manifest.to_dict())
+                now = utc_now()
                 verification = {
-                    "verified_at": utc_now(),
+                    "verified_at": now,
+                    "received_at": now,
                     "mission_id": manifest.mission_id,
                     "mission_version": manifest.mission_version,
                     "base_map_sha256": sha256_file(stored_map),
@@ -188,20 +193,13 @@ class MissionManager:
                     "image_width": manifest.base_map_width,
                     "image_height": manifest.base_map_height,
                     "status": "verified",
+                    "application_state": "STORED",
                     "source_manifest_sha256": sha256_file(manifest_source),
                 }
                 verification_path = staging / "verification.json"
                 atomic_write_json(verification_path, verification)
                 os.replace(staging, destination)
                 promoted = True
-                atomic_write_json(
-                    self._current_path(),
-                    {
-                        "mission_id": manifest.mission_id,
-                        "mission_version": manifest.mission_version,
-                        "state": "READY",
-                    },
-                )
             except Exception:
                 shutil.rmtree(staging, ignore_errors=True)
                 if promoted:

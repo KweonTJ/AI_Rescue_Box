@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import replace
 from typing import Any, Sequence
 
+from ..ai_boost import ai_boost
 from ..domain import OccupancyGrid, Point2D, RiskZone, RoutePlan
 from ..planning import NoRouteError
 from ..planning.astar import point_in_polygon
@@ -49,9 +50,39 @@ def _corridor_grid(base: OccupancyGrid, routes: Sequence[RoutePlan], radius: int
                 data[y * base.width + x] = base.value(x, y)
             except IndexError:
                 pass
-    return OccupancyGrid(
-        base.width, base.height, base.resolution, base.origin, tuple(data), base.frame_id
-    )
+    return OccupancyGrid(base.width, base.height, base.resolution, base.origin, tuple(data), base.frame_id)
+
+
+def _plan_distinct_routes(
+    planner: Any,
+    traversability: TraversabilityMap,
+    start: Point2D,
+    goal: Point2D,
+    risks: Sequence[RiskZone],
+    *,
+    map_version: int,
+    target_id: str | None,
+    config: Stage4Config,
+) -> tuple[RoutePlan, ...]:
+    accepted: list[RoutePlan] = []
+    for _ in range(max(config.route_candidate_count * 3, config.route_candidate_count)):
+        grid = _corridor_grid(traversability.grid, accepted, config.route_corridor_radius_cells)
+        try:
+            route = planner.plan(
+                grid, start, goal, risks, map_version=map_version, target_id=target_id
+            )
+        except NoRouteError:
+            break
+        if any(
+            route_distinctness(route, existing, traversability.grid)
+            < config.route_distinctness_min
+            for existing in accepted
+        ):
+            break
+        accepted.append(replace(route, route_id=f"{route.route_id}-candidate-{len(accepted) + 1}"))
+        if len(accepted) >= config.route_candidate_count:
+            break
+    return tuple(accepted)
 
 
 def plan_distinct_routes(
@@ -65,37 +96,18 @@ def plan_distinct_routes(
     target_id: str | None,
     config: Stage4Config,
 ) -> tuple[RoutePlan, ...]:
-    accepted: list[RoutePlan] = []
-    for _ in range(max(config.route_candidate_count * 3, config.route_candidate_count)):
-        grid = _corridor_grid(
-            traversability.grid, accepted, config.route_corridor_radius_cells
-        )
-        try:
-            route = planner.plan(
-                grid,
-                start,
-                goal,
-                risks,
-                map_version=map_version,
-                target_id=target_id,
-            )
-        except NoRouteError:
-            break
-        if any(
-            route_distinctness(route, existing, traversability.grid)
-            < config.route_distinctness_min
-            for existing in accepted
-        ):
-            break
-        accepted.append(
-            replace(route, route_id=f"{route.route_id}-candidate-{len(accepted) + 1}")
-        )
-        if len(accepted) >= config.route_candidate_count:
-            break
-    return tuple(accepted)
+    return ai_boost(
+        "route_candidate_generation",
+        lambda: _plan_distinct_routes(
+            planner, traversability, start, goal, risks,
+            map_version=map_version, target_id=target_id, config=config,
+        ),
+        enabled=False,
+        context={"map_version": map_version, "target_id": target_id},
+    )
 
 
-def route_evaluation(
+def _route_evaluation(
     route: RoutePlan,
     traversability: TraversabilityMap,
     change: ChangeMap,
@@ -113,7 +125,9 @@ def route_evaluation(
             continue
         unknown += int(traversability.grid.value(*cell) == -1)
         clearances.append(traversability.clearance(cell))
-        changed_near += int(any(abs(cell[0] - x) <= 1 and abs(cell[1] - y) <= 1 for x, y in changed))
+        changed_near += int(
+            any(abs(cell[0] - x) <= 1 and abs(cell[1] - y) <= 1 for x, y in changed)
+        )
     count = max(1, len(route.points))
     unknown_ratio = unknown / count
     change_ratio = changed_near / count
@@ -140,6 +154,25 @@ def route_evaluation(
         "score": round(score, 6),
         "estimated_confidence": round(confidence, 6),
     }
+
+
+def route_evaluation(
+    route: RoutePlan,
+    traversability: TraversabilityMap,
+    change: ChangeMap,
+    *,
+    alignment_confidence: float,
+    config: Stage4Config,
+) -> dict[str, Any]:
+    return ai_boost(
+        "route_evaluation",
+        lambda: _route_evaluation(
+            route, traversability, change,
+            alignment_confidence=alignment_confidence, config=config,
+        ),
+        enabled=False,
+        context={"route_id": route.route_id, "target_id": route.target_id},
+    )
 
 
 def _reachable(traversability: TraversabilityMap, starts: Sequence[Point2D]) -> set[tuple[int, int]]:
@@ -169,7 +202,7 @@ def _reachable(traversability: TraversabilityMap, starts: Sequence[Point2D]) -> 
     return reached
 
 
-def safe_zone_candidates(
+def _safe_zone_candidates(
     traversability: TraversabilityMap,
     entrances: Sequence[Point2D],
     risks: Sequence[RiskZone],
@@ -202,8 +235,7 @@ def safe_zone_candidates(
         )
         block_distance = (
             min(math.hypot(cell[0] - x, cell[1] - y) * grid.resolution for x, y in changed)
-            if changed
-            else config.safe_zone_change_distance_m * 2
+            if changed else config.safe_zone_change_distance_m * 2
         )
         if block_distance < config.safe_zone_change_distance_m:
             continue
@@ -216,11 +248,8 @@ def safe_zone_candidates(
             default=0.0,
         )
         score = (
-            clearance
-            + min(block_distance, 3.0)
-            + 0.5 * min(risk_distance, 3.0)
-            - 0.05 * entrance_distance
-            - 0.05 * route_distance
+            clearance + min(block_distance, 3.0) + 0.5 * min(risk_distance, 3.0)
+            - 0.05 * entrance_distance - 0.05 * route_distance
         )
         scored.append((score, cell, {
             "clearance_m": round(clearance, 6),
@@ -235,10 +264,34 @@ def safe_zone_candidates(
     metadata = []
     for score, cell, values in sorted(scored, key=lambda item: (-item[0], item[1][1], item[1][0])):
         point = grid.cell_to_world(cell)
-        if any(math.hypot(point.x - item.x, point.y - item.y) < config.safe_zone_spacing_m for item in chosen):
+        if any(
+            math.hypot(point.x - item.x, point.y - item.y) < config.safe_zone_spacing_m
+            for item in chosen
+        ):
             continue
         chosen.append(point)
         metadata.append({"slam_position": point.to_dict(), "score": round(score, 6), **values})
         if len(chosen) >= config.safe_zone_count:
             break
     return tuple(chosen), tuple(metadata)
+
+
+def safe_zone_candidates(
+    traversability: TraversabilityMap,
+    entrances: Sequence[Point2D],
+    risks: Sequence[RiskZone],
+    routes: Sequence[RoutePlan],
+    change: ChangeMap,
+    *,
+    alignment: AlignmentResult,
+    config: Stage4Config,
+) -> tuple[tuple[Point2D, ...], tuple[dict[str, Any], ...]]:
+    return ai_boost(
+        "safe_zone_evaluation",
+        lambda: _safe_zone_candidates(
+            traversability, entrances, risks, routes, change,
+            alignment=alignment, config=config,
+        ),
+        enabled=False,
+        context={"route_count": len(routes), "risk_count": len(risks)},
+    )

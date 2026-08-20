@@ -4,33 +4,50 @@ Windows 지휘소에서 실행하는 Host 책임 소스다.
 
 ## Ownership
 
-- `host_app/`: FastAPI, 구조도 등록·검증·정규화, Mission/Store, Semantic Result/Map Preview 수신과 검토, Approved Plan 생성
-- `flutter_app/`: Chrome/Edge에서 사용하는 Flutter Web Source
-- `ros2_ws/src/uwb_host_bridge/`: Host 측 UWB ROS bridge source
-- `config/`: Host 로컬 실행 예시 설정
-- `scripts/`: 기존 Host build/run/check
-- `tests/`: Host Unit/Mock
+- `host_app/`: 구조도 등록·정규화, Mission, semantic reconstruction, human review, Approved Plan, FastAPI/WebSocket
+- `flutter_app/`: Chrome/Edge용 Flutter Web
+- `ros2_ws/src/uwb_host_bridge/`: Host UWB ROS bridge source
+- `config/`, `scripts/`, `tests/`: 로컬 설정·실행·검증
 
-통신 계약은 `../uwb/interfaces`가 Single Source of Truth다. Host는 d_slam 구현을 직접 import하지 않는다.
+통신 계약은 `../uwb/interfaces/`가 Single Source of Truth다. Host는 d_slam 내부 구현을 직접 import하지 않는다.
+
+## Semantic Rescue Map
+
+Host는 full SLAM map snapshot을 주기적으로 받아야 하는 구조가 아니다.
+
+- 최초 `semantic_result`를 Jetson source semantic state로 저장한다.
+- 이후 `map_delta`의 `base_result_version/result_version` 연속성을 검증한다.
+- `host_app.ai_boost(...)` entry point를 거쳐 deterministic reconstruction을 수행한다.
+- stale/duplicate artifact는 idempotent하게 처리하고 version gap은 잘못 적용하지 않고 NACK/recovery 대상으로 남긴다.
+- raw received artifact는 UWB completed spool에 유지하고 derived state는 `host_reconstruction/`에 별도로 유지한다.
+- 기존 `ReviewSession`의 operator edit overlay와 Undo/Redo/Approved Plan은 source semantic state와 분리한다. 새 delta로 source가 갱신되어도 edit overlay를 재적용하고, 대상 entity가 사라지면 conflict event를 발생시킨다.
+- 기존 EventHub/WebSocket 경로를 통해 최신 semantic state가 UI에 자동 반영된다.
+
+`host_app.ai_boost()`는 AI model이 없어도 존재하며 `enabled=False`에서 deterministic merge를 그대로 수행한다.
+
+## Mission / Approved Plan
+
+Host는 사고 전 JPEG/PNG를 정규화하고 scale, robot start pose/yaw, entrances, Mission ID/name/version, team/rescuer 수, notes를 Mission Manifest에 결합해 UWB로 보낸다. Jetson의 UWB application ACK는 **저장 완료(STORED)**를 의미하며 Tablet에서 ACTIVE로 선택했다는 뜻이 아니다.
+
+사람이 최신 Rescue Map을 검토·수정한 뒤 기존 Approved Plan 흐름으로 Jetson에 재전송한다.
 
 ## Windows product path
 
-기본 제품 실행은 ROS2/UWB 장치가 없어도 Backend/Web이 먼저 뜨는 `offline` bridge mode다.
+최초 1회:
 
 ```powershell
-.\deploy\host_windows\install.ps1
-.\deploy\host_windows\build_web.ps1
+.\deploy\host_windows\setup.ps1
+```
+
+이후:
+
+```powershell
 .\deploy\host_windows\start.ps1
 ```
 
-`build_web.ps1`가 만든 `flutter_app/build/web`을 Host FastAPI가 `/`에서 직접 제공하므로 기본 UI/API 주소는 하나다.
+기존 `setup.ps1`의 Python 3.10+ 검사, Flutter 검사, `install.ps1`/`build_web.ps1` 호출, `host.env.example → host.env` 최초 생성, 기존 env 보존, runtime directory/sanity check, serial blind auto-selection 금지 특성을 유지한다. ESP32/UWB가 연결되지 않아도 setup 자체는 가능하고 setup 완료 뒤 start에는 Flutter SDK가 필요하지 않다.
 
-- UI: `http://127.0.0.1:8000/`
-- API: `http://127.0.0.1:8000/api/v1/...`
-
-Host Flutter Web은 브라우저에서 실행될 때 same-origin을 기본 API로 사용한다. 별도 Flutter 개발 서버를 사용할 때만 `--dart-define=API_BASE_URL=http://127.0.0.1:8000`처럼 명시한다.
-
-실제 Host UWB ROS bridge를 쓸 환경에서는 `AI_RESCUE_UWB_BRIDGE_MODE=ros` 또는 Windows start script의 `-EnableRosBridge`를 사용한다. Stage 1.5에서는 Windows용 ROS2 설치를 자동화하지 않는다.
+상세 Windows lifecycle은 `deploy/host_windows/README.md`를 따른다.
 
 ## Verify
 

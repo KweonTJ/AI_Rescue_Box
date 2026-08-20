@@ -81,7 +81,12 @@ def _mission(manager: MissionManager, tmp_path: Path):
     }
     manifest_path = tmp_path / "mission_manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    return manager.apply_mission(manifest_path, image_path)
+    stored = manager.apply_mission(manifest_path, image_path)
+    # Regression fixture now mirrors the real Tablet contract explicitly:
+    # STORE first, then select/ACTIVE before mission-dependent analysis.
+    assert manager.current_mission_ref() is None
+    manager.set_current_mission("stage3-mission", 1)
+    return stored
 
 
 def _real_dependencies() -> RosDependencyState:
