@@ -15,7 +15,11 @@ function Find-PythonLauncher {
         try {
             $VersionText = (& py -3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null).Trim()
             if ($LASTEXITCODE -eq 0 -and [version]$VersionText -ge [version]"3.10") {
-                return @("py", "-3")
+                return [pscustomobject]@{
+                    Command = "py"
+                    Prefix = @("-3")
+                    Version = $VersionText
+                }
             }
         } catch {}
     }
@@ -23,7 +27,11 @@ function Find-PythonLauncher {
         try {
             $VersionText = (& python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null).Trim()
             if ($LASTEXITCODE -eq 0 -and [version]$VersionText -ge [version]"3.10") {
-                return @("python")
+                return [pscustomobject]@{
+                    Command = "python"
+                    Prefix = @()
+                    Version = $VersionText
+                }
             }
         } catch {}
     }
@@ -32,9 +40,8 @@ function Find-PythonLauncher {
 
 $Launcher = Find-PythonLauncher
 if (-not (Test-Path $VenvPath)) {
-    $Command = $Launcher[0]
-    $Arguments = @()
-    if ($Launcher.Count -gt 1) { $Arguments += $Launcher[1..($Launcher.Count - 1)] }
+    $Command = $Launcher.Command
+    $Arguments = @($Launcher.Prefix)
     $Arguments += @("-m", "venv", $VenvPath)
     & $Command @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Python virtual environment creation failed." }
