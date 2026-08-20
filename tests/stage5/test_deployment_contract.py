@@ -23,7 +23,6 @@ def test_stage5_deployment_contracts() -> None:
     assert "needed only for build_web.ps1" in install
     assert "[serial]" in install
 
-
     # Jetson/firmware machine values remain configurable.
     config = read("src/uwb/config/jetson.env.example")
     platformio = read("src/uwb/firmware/platformio.ini")
@@ -34,9 +33,9 @@ def test_stage5_deployment_contracts() -> None:
     assert "AI_RESCUE_ROLE_HOST" in platformio
     assert "AI_RESCUE_ROLE_JETSON" in platformio
 
-
     # Required lifecycle scripts and validation runbooks are present.
     required = [
+        "deploy/host_windows/setup.ps1",
         "deploy/host_windows/install.ps1",
         "deploy/host_windows/start.ps1",
         "deploy/host_windows/stop.ps1",
@@ -50,3 +49,33 @@ def test_stage5_deployment_contracts() -> None:
         "docs/stage5_measurement_template.md",
     ]
     assert all((ROOT / value).is_file() for value in required)
+
+
+def test_windows_host_two_command_setup_contract() -> None:
+    setup = read("deploy/host_windows/setup.ps1")
+    readme = read("deploy/host_windows/README.md")
+    start = read("deploy/host_windows/start.ps1")
+
+    assert 'Join-Path $PSScriptRoot "install.ps1"' in setup
+    assert 'Join-Path $PSScriptRoot "build_web.ps1"' in setup
+    assert 'Join-Path $RepoRoot "src\\host\\config\\host.env"' in setup
+    assert "if (-not (Test-Path $Config))" in setup
+    assert "Copy-Item $Example $Config" in setup
+    assert "existing host.env preserved" in setup
+    assert "AI_RESCUE_UWB_SERIAL_PORT" in setup
+    assert "was NOT auto-selected" in setup
+    assert "start.ps1" in setup
+
+    quick_start = readme.split("## setup.ps1이 준비하는 것", maxsplit=1)[0]
+    assert ".\\deploy\\host_windows\\setup.ps1" in quick_start
+    assert ".\\deploy\\host_windows\\start.ps1" in quick_start
+    assert ".\\deploy\\host_windows\\stop.ps1" in quick_start
+    assert ".\\deploy\\host_windows\\status.ps1" in quick_start
+    assert "Advanced / Debug / Manual Setup" in readme
+    assert "install.ps1" in readme
+    assert "build_web.ps1" in readme
+
+    # Stage 5A runtime entry point remains intact; setup is only a wrapper.
+    assert "Start-Process -FilePath $PythonExe" in start
+    assert 'BridgeMode = "serial"' in start
+    assert "A missing ESP32 is reported as DISCONNECTED" in start

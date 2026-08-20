@@ -12,12 +12,22 @@ if ([string]::IsNullOrWhiteSpace($VenvPath)) {
 
 function Find-PythonLauncher {
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @("py", "-3")
+        try {
+            $VersionText = (& py -3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null).Trim()
+            if ($LASTEXITCODE -eq 0 -and [version]$VersionText -ge [version]"3.10") {
+                return @("py", "-3")
+            }
+        } catch {}
     }
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @("python")
+        try {
+            $VersionText = (& python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null).Trim()
+            if ($LASTEXITCODE -eq 0 -and [version]$VersionText -ge [version]"3.10") {
+                return @("python")
+            }
+        } catch {}
     }
-    throw "Python 3.10+ was not found. Install 64-bit Python and rerun install.ps1."
+    throw "Python 3.10+ was not found. Install a current 64-bit Python 3 release and rerun setup.ps1 (or install.ps1 for manual setup)."
 }
 
 $Launcher = Find-PythonLauncher
@@ -56,11 +66,11 @@ if ($LASTEXITCODE -ne 0) { throw "Host/UWB dependency installation failed." }
 $Config = Join-Path $RepoRoot "src\host\config\host.env"
 $Example = Join-Path $RepoRoot "src\host\config\host.env.example"
 if (-not (Test-Path $Config)) {
-    Write-Host "Machine config is not created automatically."
-    Write-Host "Copy and edit when ready:"
+    Write-Host "Machine config is not created automatically by manual install.ps1."
+    Write-Host "Use setup.ps1 for the normal first-time flow, or copy and edit manually:"
     Write-Host "  Copy-Item '$Example' '$Config'"
 }
 
 Write-Host "Host Python runtime is ready: $PythonExe"
 Write-Host "Flutter SDK was not checked; it is needed only for build_web.ps1."
-Write-Host "Next: .\deploy\host_windows\build_web.ps1"
+Write-Host "Normal first-time setup: .\deploy\host_windows\setup.ps1"
