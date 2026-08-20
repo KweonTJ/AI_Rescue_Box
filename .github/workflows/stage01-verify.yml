@@ -165,8 +165,7 @@ jobs:
             fi
           done
           description="Stage 0-5 Verify: $state"
-          payload="$(python3 -c 'import json,os; print(json.dumps({"state":os.environ["CI_STATE"],"context":"stage0-5-verify/aggregate","description":os.environ["CI_DESCRIPTION"]}))' \
-            CI_STATE="$state" CI_DESCRIPTION="$description")"
+          payload="$(CI_STATE="$state" CI_DESCRIPTION="$description" python3 -c 'import json,os; print(json.dumps({"state":os.environ["CI_STATE"],"context":"stage0-5-verify/aggregate","description":os.environ["CI_DESCRIPTION"]}))')"
           curl --fail-with-body --silent --show-error \
             -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
