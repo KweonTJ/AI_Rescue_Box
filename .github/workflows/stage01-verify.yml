@@ -136,3 +136,42 @@ jobs:
       - name: Compile Host and Jetson firmware roles
         working-directory: src/uwb/firmware
         run: pio run -e host_node -e jetson_node
+
+  publish-ci-status:
+    if: ${{ always() }}
+    needs:
+      - python-and-structure
+      - flutter-host-web
+      - flutter-tablet-android
+      - firmware-compile
+    runs-on: ubuntu-22.04
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish aggregate Stage 0-5 commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHON_RESULT: ${{ needs.python-and-structure.result }}
+          HOST_FLUTTER_RESULT: ${{ needs.flutter-host-web.result }}
+          TABLET_RESULT: ${{ needs.flutter-tablet-android.result }}
+          FIRMWARE_RESULT: ${{ needs.firmware-compile.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state=success
+          for result in "$PYTHON_RESULT" "$HOST_FLUTTER_RESULT" "$TABLET_RESULT" "$FIRMWARE_RESULT"; do
+            if [[ "$result" != success ]]; then
+              state=failure
+            fi
+          done
+          description="Stage 0-5 Verify: $state"
+          payload="$(python3 -c 'import json,os; print(json.dumps({"state":os.environ["CI_STATE"],"context":"stage0-5-verify/aggregate","description":os.environ["CI_DESCRIPTION"]}))' \
+            CI_STATE="$state" CI_DESCRIPTION="$description")"
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -d "$payload"
+          [[ "$state" == success ]]
