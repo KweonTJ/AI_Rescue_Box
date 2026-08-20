@@ -165,7 +165,8 @@ jobs:
             fi
           done
           description="Stage 0-5 Verify: $state"
-          payload="$(CI_STATE="$state" CI_DESCRIPTION="$description" python3 -c 'import json,os; print(json.dumps({"state":os.environ["CI_STATE"],"context":"stage0-5-verify/aggregate","description":os.environ["CI_DESCRIPTION"]}))')"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          payload="$(CI_STATE="$state" CI_DESCRIPTION="$description" CI_TARGET_URL="$run_url" python3 -c 'import json,os; print(json.dumps({"state":os.environ["CI_STATE"],"context":"stage0-5-verify/aggregate","description":os.environ["CI_DESCRIPTION"],"target_url":os.environ["CI_TARGET_URL"]}))')"
           curl --fail-with-body --silent --show-error \
             -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
