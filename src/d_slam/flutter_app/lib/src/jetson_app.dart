@@ -33,6 +33,7 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
   // previously ACTIVE Jetson mission may be labelled as current, but it never
   // auto-navigates the operator past this explicit choice.
   bool _showMissionSelector = true;
+  final _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -49,8 +50,10 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
     final missionId = _asString(mission['mission_id']) ?? 'unknown';
     final version = _asInt(mission['mission_version'] ?? mission['version']) ?? 0;
     final name = _asString(mission['mission_name']) ?? missionId;
+    final navigatorContext = _navigatorKey.currentContext;
+    if (navigatorContext == null) return;
     final confirmed = await showDialog<bool>(
-      context: context,
+      context: navigatorContext,
       builder: (dialogContext) => AlertDialog(
         title: const Text('이 구조도를 사용하시겠습니까?'),
         content: Text('$name\n$missionId · v$version'),
@@ -87,6 +90,7 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'AI Rescue Box · Jetson',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
