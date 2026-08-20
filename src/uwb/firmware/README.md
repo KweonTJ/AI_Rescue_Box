@@ -19,6 +19,15 @@ Role mapping:
 
 DWM1000 SPI/IRQ/RST/SS pin은 기존 `src/uwb_node/main.cpp` 값을 재사용한다. 실제 보드 배선이 다르면 Stage 5B에서 측정/도면 확인 후 수정하며, Stage 5A에서 새 pin을 추측하지 않는다.
 
+### thotro v0.9 ESP32 compile compatibility
+
+기존 dependency `thotro/arduino-dw1000 v0.9`는 `DW1000.cpp`에서 `SPI.usingInterrupt()`를 호출하지만 ESP32 Arduino `SPIClass`에는 해당 API가 없다. `platformio.ini`의 `post:scripts/patch_dw1000_esp32.py`는 dependency가 resolve된 뒤 **그 한 guard만** `ESP32`에서도 건너뛰도록 바꾼다.
+
+- dependency version은 v0.9로 고정한다.
+- 예상한 v0.9 source 문구가 달라지면 build를 즉시 실패시킨다.
+- `src/uwb/firmware/src/uwb_node/main.cpp`, Radio framing, ACK/retry 로직은 수정하지 않는다.
+- 이는 compile 호환성 보완일 뿐 DWM1000 Radio 실장 성공을 의미하지 않는다.
+
 ## Flash (Stage 5B only)
 
 `platformio.ini`에는 `/dev/ttyACM0`, `/dev/ttyUSB0`, `COM3` 같은 machine port를 고정하지 않는다.
