@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/widgets.dart' show Key;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rescue_api_client/rescue_api_client.dart';
 import 'package:rescue_api_client/src/jetson_app.dart';
