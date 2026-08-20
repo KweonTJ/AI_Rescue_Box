@@ -11,13 +11,16 @@ from pydantic import BaseModel, Field
 from ..config import load_config
 from ..map_preview import OccupancyPreviewRenderer
 from ..mission import MissionManager
+from ..rescue_map import SemanticRescueMapRenderer
 from ..runtime import Stage3Runtime
+from ..stage4 import Stage4Processor
 from .service import (
     ApiConflictError,
     ApiNotFoundError,
     ApiUnavailableError,
     JetsonApiService,
 )
+from .stage4_service import Stage4JetsonApiService
 
 
 class SendRequest(BaseModel):
@@ -32,7 +35,14 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
             os.environ.get("AI_RESCUE_DATA_ROOT", str(config.data_root))
         ).expanduser()
         runtime = Stage3Runtime(config)
-        service = JetsonApiService(
+        # Keep Stage3Runtime and all of its sensor providers intact. Stage 4
+        # only injects map fusion/planning into the existing AnalysisPipeline.
+        runtime.pipeline.stage4 = Stage4Processor(
+            config.stage4,
+            occupied_threshold=config.occupied_threshold,
+            minimum_passage_width_m=config.minimum_passage_width_m,
+        )
+        service = Stage4JetsonApiService(
             MissionManager(
                 data_root / "missions",
                 max_map_bytes=config.max_map_bytes,
@@ -43,6 +53,11 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
                 occupied_threshold=config.occupied_threshold,
                 max_dimension=config.map_preview_max_dimension,
             ),
+            rescue_preview_renderer=SemanticRescueMapRenderer(
+                max_dimension=config.map_preview_max_dimension,
+                config=config.stage4,
+            ),
+            stage4_config=config.stage4,
             candidate_source=runtime.candidate_source,
             mode=config.mode,
             provider_status_source=runtime.component_status,

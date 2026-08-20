@@ -1,4 +1,4 @@
-name: Stage 0-1.5 Verify
+name: Stage 0-4 Verify
 
 on:
   workflow_dispatch:
@@ -57,9 +57,11 @@ jobs:
       - name: d_slam Unit and Mock
         run: python3 -m pytest -q src/d_slam/tests
       - name: Stage 2 E2E
-        run: python3 -m pytest -q tests/stage2/e2e/test_stage2_e2e.py
+        run: python3 -m pytest -q tests/stage2/e2e
       - name: Stage 3 Analysis Integration
         run: python3 -m pytest -q tests/stage3
+      - name: Stage 4 Map Planning Integration
+        run: python3 -m pytest -q tests/stage4
       - name: ROS availability
         run: |
           if command -v colcon >/dev/null 2>&1 && [[ -n "${ROS_DISTRO:-}" ]]; then

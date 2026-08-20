@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Sequence
 
 from .alignment import PriorSlamAlignmentEvaluator, ProvisionalMissionTransform, RigidMissionTransform
@@ -25,16 +26,30 @@ from .providers.base import (
     SlamProvider,
     TeamRecommendationProvider,
 )
+from .stage4 import (
+    Stage4Artifacts,
+    Stage4Processor,
+    plan_distinct_routes,
+    route_distinctness,
+    route_evaluation,
+    safe_zone_candidates,
+)
 
 
 @dataclass(frozen=True)
 class AnalysisReport:
     result: SemanticResult
     unreachable_candidate_ids: tuple[str, ...]
+    stage4_artifacts: Stage4Artifacts | None = None
 
 
 class AnalysisPipeline:
-    """Keep planning in live SLAM coordinates, export only mission-map coordinates."""
+    """Run perception outputs through live-SLAM planning and mission-frame export.
+
+    Stage 3 remains the fallback path.  When a Stage4Processor and a verified
+    prior-map path are supplied, the provisional transform becomes only the
+    initial guess for bounded Prior/Live alignment.
+    """
 
     def __init__(
         self,
@@ -45,6 +60,7 @@ class AnalysisPipeline:
         teams: TeamRecommendationProvider,
         alignment: PriorSlamAlignmentEvaluator | None = None,
         mission_transform: ProvisionalMissionTransform | None = None,
+        stage4: Stage4Processor | None = None,
         confirmation_observations: int = 2,
     ) -> None:
         if confirmation_observations < 2:
@@ -55,14 +71,14 @@ class AnalysisPipeline:
         self.teams = teams
         self.alignment = alignment or PriorSlamAlignmentEvaluator()
         self.mission_transform = mission_transform or ProvisionalMissionTransform()
+        self.stage4 = stage4
         self.confirmation_observations = confirmation_observations
 
     @staticmethod
     def safe_waiting_points(
         entrances: Sequence[Point2D], risks: Sequence[RiskZone]
     ) -> tuple[Point2D, ...]:
-        """Entrances are the only initial waiting candidates; no place is invented."""
-
+        """Stage 3 fallback: entrances are the only waiting candidates."""
         safe = []
         for entrance in entrances:
             if all(
@@ -112,50 +128,30 @@ class AnalysisPipeline:
             position=transform.slam_to_mission_point(recommendation.position),
         )
 
-    def run(
+    def _stage3_routes(
         self,
         *,
-        mission: MissionManifest,
+        grid,
+        entrances: Sequence[Point2D],
         candidates: Sequence[PersonCandidate],
-        result_version: int,
-        priorities: dict[str, int] | None = None,
-    ) -> AnalysisReport:
-        snapshot = self.slam.snapshot()
-        provider_mode = self.slam.status().mode
-        is_mock = (
-            getattr(provider_mode, "value", provider_mode) == ProviderMode.MOCK.value
-        )
-        slam_start_pose = (
-            snapshot.trajectory[0] if snapshot.trajectory else snapshot.robot_pose
-        )
-        transform = (
-            ProvisionalMissionTransform.identity_for_mock()
-            if is_mock
-            else self.mission_transform.resolve(mission, slam_start_pose)
-        )
-
-        # The RTAB occupancy grid is never rotated/re-written for Stage 3.  Convert
-        # mission entrances into the live SLAM frame, plan there, then transform
-        # only the published result back into mission_map.
-        slam_entrances = tuple(
-            transform.mission_to_slam_point(point) for point in mission.entrances
-        )
-        risks_slam = tuple(self.risk.assess(snapshot))
-        routes_slam: list[RoutePlan] = []
-        unreachable = []
+        risks: Sequence[RiskZone],
+        map_version: int,
+    ) -> tuple[list[RoutePlan], list[str]]:
+        routes: list[RoutePlan] = []
+        unreachable: list[str] = []
         for candidate in sorted(candidates, key=lambda item: item.detection_id):
             if candidate.map_position is None:
                 unreachable.append(candidate.detection_id)
                 continue
             best: RoutePlan | None = None
-            for entrance in slam_entrances:
+            for entrance in entrances:
                 try:
                     planned = self.route.plan(
-                        snapshot.occupancy_grid,
+                        grid,
                         entrance,
                         candidate.map_position,
-                        risks_slam,
-                        map_version=snapshot.map_version,
+                        risks,
+                        map_version=map_version,
                         target_id=candidate.detection_id,
                     )
                 except NoRouteError:
@@ -170,15 +166,175 @@ class AnalysisPipeline:
             if best is None:
                 unreachable.append(candidate.detection_id)
             else:
-                routes_slam.append(best)
+                routes.append(best)
+        return routes, unreachable
 
-        waiting_slam = self.safe_waiting_points(slam_entrances, risks_slam)
+    def _stage4_routes(
+        self,
+        *,
+        artifacts: Stage4Artifacts,
+        entrances: Sequence[Point2D],
+        candidates: Sequence[PersonCandidate],
+        risks: Sequence[RiskZone],
+        map_version: int,
+    ) -> tuple[list[RoutePlan], list[RoutePlan], list[str], tuple[dict, ...]]:
+        published: list[RoutePlan] = []
+        best_for_teams: list[RoutePlan] = []
+        unreachable: list[str] = []
+        evaluations: list[dict] = []
+        config = self.stage4.config if self.stage4 is not None else None
+        assert config is not None
+
+        for candidate in sorted(candidates, key=lambda item: item.detection_id):
+            if candidate.map_position is None:
+                unreachable.append(candidate.detection_id)
+                continue
+            candidate_routes: list[tuple[RoutePlan, dict]] = []
+            planning_risks = tuple(
+                risk for risk in risks
+                if risk.risk_type not in {"obstacle_candidate", "unknown_area"}
+            )
+            for entrance in entrances:
+                routes = plan_distinct_routes(
+                    self.route,
+                    artifacts.traversability,
+                    entrance,
+                    candidate.map_position,
+                    planning_risks,
+                    map_version=map_version,
+                    target_id=candidate.detection_id,
+                    config=config,
+                )
+                for route in routes:
+                    evaluation = route_evaluation(
+                        route,
+                        artifacts.traversability,
+                        artifacts.change,
+                        alignment_confidence=artifacts.alignment.confidence,
+                        config=config,
+                    )
+                    candidate_routes.append((route, evaluation))
+
+            candidate_routes.sort(
+                key=lambda item: (
+                    item[1]["score"],
+                    item[0].risk_cost,
+                    item[0].total_distance,
+                    item[0].route_id,
+                )
+            )
+            selected: list[tuple[RoutePlan, dict]] = []
+            for route, evaluation in candidate_routes:
+                if any(
+                    route_distinctness(route, existing[0], artifacts.traversability.grid)
+                    < config.route_distinctness_min
+                    for existing in selected
+                ):
+                    continue
+                selected.append((route, evaluation))
+                if len(selected) >= config.route_candidate_count:
+                    break
+            if not selected:
+                unreachable.append(candidate.detection_id)
+                continue
+            best_for_teams.append(selected[0][0])
+            for rank, (route, evaluation) in enumerate(selected, start=1):
+                ranked = replace(route, route_id=f"{route.route_id}-rank-{rank}")
+                evaluation = {**evaluation, "route_id": ranked.route_id, "rank": rank}
+                published.append(ranked)
+                evaluations.append(evaluation)
+        return published, best_for_teams, unreachable, tuple(evaluations)
+
+    def run(
+        self,
+        *,
+        mission: MissionManifest,
+        candidates: Sequence[PersonCandidate],
+        result_version: int,
+        priorities: dict[str, int] | None = None,
+        prior_map_path: Path | None = None,
+    ) -> AnalysisReport:
+        snapshot = self.slam.snapshot()
+        provider_mode = self.slam.status().mode
+        is_mock = (
+            getattr(provider_mode, "value", provider_mode) == ProviderMode.MOCK.value
+        )
+        slam_start_pose = (
+            snapshot.trajectory[0] if snapshot.trajectory else snapshot.robot_pose
+        )
+        initial_transform = (
+            ProvisionalMissionTransform.identity_for_mock()
+            if is_mock
+            else self.mission_transform.resolve(mission, slam_start_pose)
+        )
+
+        risks_slam = tuple(self.risk.assess(snapshot))
+        stage4_artifacts: Stage4Artifacts | None = None
+        transform = initial_transform
+        if not is_mock and self.stage4 is not None and prior_map_path is not None:
+            stage4_artifacts = self.stage4.prepare(
+                mission=mission,
+                prior_map_path=Path(prior_map_path),
+                snapshot=snapshot,
+                initial=initial_transform,
+                risks=risks_slam,
+            )
+            transform = stage4_artifacts.alignment.transform
+
+        slam_entrances = tuple(
+            transform.mission_to_slam_point(point) for point in mission.entrances
+        )
+
+        if stage4_artifacts is None:
+            routes_slam, unreachable = self._stage3_routes(
+                grid=snapshot.occupancy_grid,
+                entrances=slam_entrances,
+                candidates=candidates,
+                risks=risks_slam,
+                map_version=snapshot.map_version,
+            )
+            best_routes_slam = list(routes_slam)
+            waiting_slam = self.safe_waiting_points(slam_entrances, risks_slam)
+            route_evaluations: tuple[dict, ...] = ()
+            safe_evaluations: tuple[dict, ...] = ()
+        else:
+            (
+                routes_slam,
+                best_routes_slam,
+                unreachable,
+                route_evaluations,
+            ) = self._stage4_routes(
+                artifacts=stage4_artifacts,
+                entrances=slam_entrances,
+                candidates=candidates,
+                risks=risks_slam,
+                map_version=snapshot.map_version,
+            )
+            stage4_safe_risks = tuple(
+                risk for risk in risks_slam
+                if risk.risk_type not in {"obstacle_candidate", "unknown_area"}
+            )
+            waiting_slam, safe_evaluations = safe_zone_candidates(
+                stage4_artifacts.traversability,
+                slam_entrances,
+                stage4_safe_risks,
+                routes_slam,
+                stage4_artifacts.change,
+                alignment=stage4_artifacts.alignment,
+                config=self.stage4.config,
+            )
+            stage4_artifacts = replace(
+                stage4_artifacts,
+                route_evaluations=route_evaluations,
+                safe_zone_evaluations=safe_evaluations,
+            )
+
         recommendations_slam = tuple(
             self.teams.recommend(
                 team_count=mission.available_teams,
                 rescuer_count=mission.available_rescuers,
                 candidates=candidates,
-                routes=routes_slam,
+                routes=best_routes_slam,
                 waiting_points=waiting_slam,
                 priorities=priorities,
             )
@@ -211,14 +367,23 @@ class AnalysisPipeline:
             tuple(transform.slam_to_mission_point(point) for point in polygon)
             for polygon in snapshot.unknown_areas
         )
-        map_alignment = {
-            **transform.metadata(),
-            "prior_live_extent_sanity": self.alignment.evaluate(mission, snapshot),
-        }
+
+        if stage4_artifacts is None:
+            map_alignment = {
+                **transform.metadata(),
+                "prior_live_extent_sanity": self.alignment.evaluate(mission, snapshot),
+            }
+        else:
+            map_alignment = {
+                **stage4_artifacts.alignment.metadata(),
+                "stage4": stage4_artifacts.metadata(include_change_cells=False),
+            }
 
         confidences = [item.confidence for item in mission_candidates]
         confidences.extend(item.confidence for item in risks)
         confidences.extend(item.confidence for item in recommendations)
+        if stage4_artifacts is not None:
+            confidences.append(stage4_artifacts.alignment.confidence)
         analysis_mode = "mock" if is_mock else "real"
         result = SemanticResult(
             mission_id=mission.mission_id,
@@ -252,4 +417,4 @@ class AnalysisPipeline:
             ),
             analysis_mode=analysis_mode,
         )
-        return AnalysisReport(result, tuple(unreachable))
+        return AnalysisReport(result, tuple(unreachable), stage4_artifacts)

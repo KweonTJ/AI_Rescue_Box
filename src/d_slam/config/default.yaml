@@ -10,8 +10,7 @@ slam_map_frame: map
 slam_odom_frame: odom
 confirmation_observations: 2
 
-# Stage 3 only: initial live-SLAM pose is anchored to mission robot_start.
-# Set mode=configured with x/y/yaw only for an explicitly measured transform.
+# Initial guess / fallback for Stage 4 Prior↔Live alignment.
 mission_transform_mode: initial_anchor
 mission_transform_x_m: null
 mission_transform_y_m: null
@@ -21,6 +20,40 @@ map_preview_interval_seconds: 60
 map_preview_max_dimension: 768
 occupied_threshold: 65
 minimum_passage_width_m: 0.8
+
+stage4:
+  prior_dark_threshold: 64
+  prior_free_threshold: 220
+  alignment_translation_search_m: 1.5
+  alignment_translation_coarse_step_m: 0.25
+  alignment_translation_fine_step_m: 0.05
+  alignment_yaw_search_radians: 0.17453292519943295
+  alignment_yaw_coarse_step_radians: 0.08726646259971647
+  alignment_yaw_fine_step_radians: 0.017453292519943295
+  alignment_min_confidence: 0.55
+  alignment_min_overlap: 0.35
+  alignment_min_coverage: 0.20
+  alignment_min_known_cells: 25
+  alignment_min_occupied_cells: 8
+  alignment_max_samples: 2500
+  robot_clearance_m: 0.25
+  prior_reference_wall_block: true
+  narrow_passage_cost_value: 45
+  traversability_risk_weight: 30.0
+  traversability_block_risk_severity: 0.85
+  route_candidate_count: 3
+  route_distinctness_min: 0.20
+  route_corridor_radius_cells: 0
+  route_score_distance_weight: 1.0
+  route_score_risk_weight: 1.0
+  route_score_unknown_weight: 10.0
+  route_score_change_weight: 5.0
+  route_score_clearance_weight: 1.0
+  safe_zone_count: 3
+  safe_zone_min_clearance_m: 0.50
+  safe_zone_spacing_m: 1.0
+  safe_zone_change_distance_m: 0.75
+  safe_zone_risk_block_severity: 0.70
 
 topics:
   rgb: /camera/color/image_raw

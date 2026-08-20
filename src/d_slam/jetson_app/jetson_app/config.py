@@ -1,4 +1,4 @@
-"""Validated Stage 3 configuration with no machine-specific hard-coding."""
+"""Validated Stage 4 configuration with no machine-specific hard-coding."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
+
+from .stage4 import Stage4Config
 
 
 class ConfigurationError(ValueError):
@@ -75,6 +77,7 @@ class AppConfig:
     prior_map_publish_enabled: bool = True
     prior_map_dark_pixel_threshold: int = 64
     initial_pose_publish_enabled: bool = True
+    stage4: Stage4Config = field(default_factory=Stage4Config)
     topics: TopicConfig = field(default_factory=TopicConfig)
 
     def __post_init__(self) -> None:
@@ -166,6 +169,19 @@ class AppConfig:
                 f"unknown topic configuration: {', '.join(sorted(unknown_topics))}"
             )
         topics = TopicConfig(**dict(topics_value))
+        stage4_value = value.get("stage4", {})
+        if not isinstance(stage4_value, Mapping):
+            raise ConfigurationError("stage4 must be an object")
+        allowed_stage4 = set(Stage4Config.__dataclass_fields__)
+        unknown_stage4 = set(stage4_value) - allowed_stage4
+        if unknown_stage4:
+            raise ConfigurationError(
+                f"unknown stage4 configuration: {', '.join(sorted(unknown_stage4))}"
+            )
+        try:
+            stage4 = Stage4Config(**dict(stage4_value))
+        except (TypeError, ValueError) as error:
+            raise ConfigurationError(f"invalid stage4 configuration: {error}") from error
         model_path = value.get("model_path")
         return cls(
             mode=str(value.get("mode", "real")),
@@ -174,15 +190,11 @@ class AppConfig:
             detection_confidence=float(value.get("detection_confidence", 0.5)),
             depth_minimum_m=float(value.get("depth_minimum_m", 0.15)),
             depth_maximum_m=float(value.get("depth_maximum_m", 10.0)),
-            sensor_sync_tolerance_s=float(
-                value.get("sensor_sync_tolerance_s", 0.25)
-            ),
+            sensor_sync_tolerance_s=float(value.get("sensor_sync_tolerance_s", 0.25)),
             slam_map_frame=str(value.get("slam_map_frame", "map")),
             slam_odom_frame=str(value.get("slam_odom_frame", "odom")),
             confirmation_observations=int(value.get("confirmation_observations", 2)),
-            mission_transform_mode=str(
-                value.get("mission_transform_mode", "initial_anchor")
-            ),
+            mission_transform_mode=str(value.get("mission_transform_mode", "initial_anchor")),
             mission_transform_x_m=(
                 float(value["mission_transform_x_m"])
                 if value.get("mission_transform_x_m") is not None
@@ -198,56 +210,27 @@ class AppConfig:
                 if value.get("mission_transform_yaw_radians") is not None
                 else None
             ),
-            map_preview_interval_seconds=float(
-                value.get("map_preview_interval_seconds", 60.0)
-            ),
-            map_preview_max_dimension=int(
-                value.get("map_preview_max_dimension", 768)
-            ),
+            map_preview_interval_seconds=float(value.get("map_preview_interval_seconds", 60.0)),
+            map_preview_max_dimension=int(value.get("map_preview_max_dimension", 768)),
             max_map_bytes=int(value.get("max_map_bytes", 10 * 1024 * 1024)),
             max_json_bytes=int(value.get("max_json_bytes", 2 * 1024 * 1024)),
             allow_unknown_routes=bool(value.get("allow_unknown_routes", False)),
             unknown_route_cost=float(value.get("unknown_route_cost", 100.0)),
             occupied_threshold=int(value.get("occupied_threshold", 65)),
-            minimum_passage_width_m=float(
-                value.get("minimum_passage_width_m", 0.8)
-            ),
-            disconnected_minimum_cells=int(
-                value.get("disconnected_minimum_cells", 4)
-            ),
-            sensor_risk_cell_size_m=float(
-                value.get("sensor_risk_cell_size_m", 0.25)
-            ),
-            sensor_risk_min_points_per_cell=int(
-                value.get("sensor_risk_min_points_per_cell", 4)
-            ),
-            sensor_risk_debris_minimum_points=int(
-                value.get("sensor_risk_debris_minimum_points", 12)
-            ),
-            sensor_risk_debris_spread_m=float(
-                value.get("sensor_risk_debris_spread_m", 0.30)
-            ),
-            sensor_risk_step_height_m=float(
-                value.get("sensor_risk_step_height_m", 0.18)
-            ),
-            sensor_risk_drop_height_m=float(
-                value.get("sensor_risk_drop_height_m", 0.45)
-            ),
-            sensor_risk_depth_pixel_stride=int(
-                value.get("sensor_risk_depth_pixel_stride", 8)
-            ),
-            sensor_risk_maximum_points=int(
-                value.get("sensor_risk_maximum_points", 40_000)
-            ),
-            prior_map_publish_enabled=bool(
-                value.get("prior_map_publish_enabled", True)
-            ),
-            prior_map_dark_pixel_threshold=int(
-                value.get("prior_map_dark_pixel_threshold", 64)
-            ),
-            initial_pose_publish_enabled=bool(
-                value.get("initial_pose_publish_enabled", True)
-            ),
+            minimum_passage_width_m=float(value.get("minimum_passage_width_m", 0.8)),
+            disconnected_minimum_cells=int(value.get("disconnected_minimum_cells", 4)),
+            sensor_risk_cell_size_m=float(value.get("sensor_risk_cell_size_m", 0.25)),
+            sensor_risk_min_points_per_cell=int(value.get("sensor_risk_min_points_per_cell", 4)),
+            sensor_risk_debris_minimum_points=int(value.get("sensor_risk_debris_minimum_points", 12)),
+            sensor_risk_debris_spread_m=float(value.get("sensor_risk_debris_spread_m", 0.30)),
+            sensor_risk_step_height_m=float(value.get("sensor_risk_step_height_m", 0.18)),
+            sensor_risk_drop_height_m=float(value.get("sensor_risk_drop_height_m", 0.45)),
+            sensor_risk_depth_pixel_stride=int(value.get("sensor_risk_depth_pixel_stride", 8)),
+            sensor_risk_maximum_points=int(value.get("sensor_risk_maximum_points", 40_000)),
+            prior_map_publish_enabled=bool(value.get("prior_map_publish_enabled", True)),
+            prior_map_dark_pixel_threshold=int(value.get("prior_map_dark_pixel_threshold", 64)),
+            initial_pose_publish_enabled=bool(value.get("initial_pose_publish_enabled", True)),
+            stage4=stage4,
             topics=topics,
         )
 
@@ -278,7 +261,6 @@ def _env_float(name: str) -> float | None:
 
 def _apply_environment(config: AppConfig) -> AppConfig:
     """Overlay only hardware/runtime values that are useful on the Jetson."""
-
     topic_updates = {}
     for field_name, env_name in {
         "rgb": "AI_RESCUE_RGB_TOPIC",
@@ -301,15 +283,9 @@ def _apply_environment(config: AppConfig) -> AppConfig:
     values: dict[str, Any] = {
         "topics": topics,
         "mode": os.environ.get("AI_RESCUE_ANALYSIS_MODE", config.mode).strip(),
-        "model_path": (
-            Path(model_value).expanduser() if model_value else config.model_path
-        ),
-        "slam_map_frame": os.environ.get(
-            "AI_RESCUE_SLAM_MAP_FRAME", config.slam_map_frame
-        ).strip(),
-        "slam_odom_frame": os.environ.get(
-            "AI_RESCUE_SLAM_ODOM_FRAME", config.slam_odom_frame
-        ).strip(),
+        "model_path": Path(model_value).expanduser() if model_value else config.model_path,
+        "slam_map_frame": os.environ.get("AI_RESCUE_SLAM_MAP_FRAME", config.slam_map_frame).strip(),
+        "slam_odom_frame": os.environ.get("AI_RESCUE_SLAM_ODOM_FRAME", config.slam_odom_frame).strip(),
         "mission_transform_mode": transform_mode,
     }
     floats = {
@@ -329,9 +305,7 @@ def _apply_environment(config: AppConfig) -> AppConfig:
 
 
 def load_config(path: Path | None = None) -> AppConfig:
-    selected = Path(
-        path or os.environ.get("AI_RESCUE_JETSON_CONFIG") or default_config_path()
-    )
+    selected = Path(path or os.environ.get("AI_RESCUE_JETSON_CONFIG") or default_config_path())
     try:
         value = yaml.safe_load(selected.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as error:
