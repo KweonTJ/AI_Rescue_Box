@@ -2,58 +2,56 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-APP_ROOT="$ROOT/src/d_slam/flutter_app"
-JETSON_API_BASE_URL="${JETSON_API_BASE_URL:-http://192.168.50.1:8001}"
+APP="$ROOT/src/d_slam/flutter_app"
+MODE=debug
+API_URL="${JETSON_API_BASE_URL:-http://192.168.50.1:8001}"
+WS_URL="${JETSON_WS_URL:-}"
+OUTPUT_DIR="${AI_RESCUE_APK_OUTPUT_DIR:-$ROOT/dist/tablet}"
 
-command -v flutter >/dev/null 2>&1 || {
-  echo "flutter was not found in PATH" >&2
-  exit 1
-}
+while (( $# )); do
+  case "$1" in
+    --debug) MODE=debug; shift ;;
+    --release) MODE=release; shift ;;
+    --api-url) API_URL="${2:?--api-url requires a value}"; shift 2 ;;
+    --ws-url) WS_URL="${2:?--ws-url requires a value}"; shift 2 ;;
+    --output-dir) OUTPUT_DIR="${2:?--output-dir requires a value}"; shift 2 ;;
+    -h|--help)
+      echo "usage: $0 [--debug|--release] [--api-url URL] [--ws-url URL] [--output-dir DIR]"
+      exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
 
-bootstrap_android_wrapper() {
-  local wrapper_jar="$APP_ROOT/android/gradle/wrapper/gradle-wrapper.jar"
-  local gradlew="$APP_ROOT/android/gradlew"
-  if [[ -f "$wrapper_jar" && -f "$gradlew" ]]; then
-    return
-  fi
+command -v flutter >/dev/null 2>&1 || { echo "Flutter SDK is required to build the APK." >&2; exit 1; }
+[[ "$API_URL" == http://* || "$API_URL" == https://* ]] || { echo "Jetson API URL must start with http:// or https://" >&2; exit 2; }
 
-  # Stage 1 source already contains the Android app/manifest.  The trimmed
-  # project did not retain Gradle wrapper binaries, so generate only the
-  # Flutter-SDK-compatible wrapper/build scaffold in a temporary project.
-  local temp_dir
-  temp_dir="$(mktemp -d)"
-  trap 'rm -rf "$temp_dir"' RETURN
-  flutter create \
-    --platforms=android \
-    --org com.airescue \
-    --project-name ai_rescue_box_tablet \
-    "$temp_dir/bootstrap" >/dev/null
-
-  mkdir -p "$APP_ROOT/android"
-  cp "$temp_dir/bootstrap/android/gradlew" "$APP_ROOT/android/gradlew"
-  cp "$temp_dir/bootstrap/android/gradlew.bat" "$APP_ROOT/android/gradlew.bat"
-  rm -rf "$APP_ROOT/android/gradle"
-  cp -R "$temp_dir/bootstrap/android/gradle" "$APP_ROOT/android/gradle"
-
-  for name in build.gradle build.gradle.kts gradle.properties settings.gradle settings.gradle.kts local.properties; do
-    if [[ -f "$temp_dir/bootstrap/android/$name" ]]; then
-      cp "$temp_dir/bootstrap/android/$name" "$APP_ROOT/android/$name"
-    fi
+if [[ "$MODE" == release ]]; then
+  PROPERTIES="$APP/android/key.properties"
+  [[ -f "$PROPERTIES" ]] || {
+    echo "Release signing is not configured." >&2
+    echo "Copy $APP/android/key.properties.example to $PROPERTIES and use a keystore outside the repository." >&2
+    exit 2
+  }
+  for key in storePassword keyPassword keyAlias storeFile; do
+    grep -Eq "^${key}=.+" "$PROPERTIES" || { echo "key.properties is missing $key" >&2; exit 2; }
   done
-  chmod +x "$APP_ROOT/android/gradlew"
-}
+  grep -q 'CHANGE_ME' "$PROPERTIES" && { echo "Replace CHANGE_ME values before release build." >&2; exit 2; }
+  store_file="$(sed -n 's/^storeFile=//p' "$PROPERTIES" | tail -n1)"
+  [[ -f "$store_file" ]] || { echo "Configured release keystore was not found: $store_file" >&2; exit 2; }
+fi
 
-bootstrap_android_wrapper
-
-cd "$APP_ROOT"
+cd "$APP"
 flutter pub get
-flutter build apk --debug \
-  --dart-define="JETSON_API_BASE_URL=$JETSON_API_BASE_URL"
+args=(build apk "--$MODE" "--dart-define=JETSON_API_BASE_URL=$API_URL")
+if [[ -n "$WS_URL" ]]; then args+=("--dart-define=JETSON_WS_URL=$WS_URL"); fi
+flutter "${args[@]}"
 
-APK="$APP_ROOT/build/app/outputs/flutter-apk/app-debug.apk"
-[[ -f "$APK" ]] || {
-  echo "debug APK was not produced: $APK" >&2
-  exit 1
-}
-printf 'Tablet debug APK: %s\n' "$APK"
-printf 'Jetson API: %s\n' "$JETSON_API_BASE_URL"
+source_apk="$APP/build/app/outputs/flutter-apk/app-$MODE.apk"
+[[ -f "$source_apk" ]] || { echo "APK output was not found: $source_apk" >&2; exit 1; }
+mkdir -p "$OUTPUT_DIR"
+destination="$OUTPUT_DIR/ai-rescue-box-tablet-$MODE.apk"
+cp "$source_apk" "$destination"
+sha256sum "$destination" > "$destination.sha256"
+echo "Tablet APK ready: $destination"
+echo "Jetson API: $API_URL"
+echo "This build result does not verify installation, network, or Jetson hardware."

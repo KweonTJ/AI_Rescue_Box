@@ -19,6 +19,7 @@ htmlcov/
 
 # Virtual environments
 .venv/
+.venv-*/
 .venv_*/
 venv/
 
@@ -29,6 +30,15 @@ venv/
 .packages
 **/flutter_app/build/
 **/flutter_app/.dart_tool/
+
+# PlatformIO
+.pio/
+**/.pio/
+
+# Android signing secrets
+**/android/key.properties
+*.jks
+*.keystore
 
 # IDE / OS
 .vscode/
@@ -44,10 +54,12 @@ Thumbs.db
 .env.*
 !*.env.example
 src/host/config/host.env
+src/d_slam/config/jetson.env
 src/uwb/config/jetson.env
 
-# Runtime data
+# Runtime/release data
 /data/
+/dist/
 /tmp/
 /temp/
 /cache/

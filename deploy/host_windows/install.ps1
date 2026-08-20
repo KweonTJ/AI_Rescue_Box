@@ -4,21 +4,30 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$HostRoot = Join-Path $RepoRoot "src\host"
+$HostPackage = Join-Path $RepoRoot "src\host\host_app"
+$UwbPackage = Join-Path $RepoRoot "src\uwb\protocol"
 if ([string]::IsNullOrWhiteSpace($VenvPath)) {
     $VenvPath = Join-Path $RepoRoot ".venv-host"
 }
 
-if (-not (Test-Path $VenvPath)) {
+function Find-PythonLauncher {
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        & py -3 -m venv $VenvPath
+        return @("py", "-3")
     }
-    elseif (Get-Command python -ErrorAction SilentlyContinue) {
-        & python -m venv $VenvPath
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        return @("python")
     }
-    else {
-        throw "Python 3.10+ was not found. Install Python and rerun install.ps1."
-    }
+    throw "Python 3.10+ was not found. Install 64-bit Python and rerun install.ps1."
+}
+
+$Launcher = Find-PythonLauncher
+if (-not (Test-Path $VenvPath)) {
+    $Command = $Launcher[0]
+    $Arguments = @()
+    if ($Launcher.Count -gt 1) { $Arguments += $Launcher[1..($Launcher.Count - 1)] }
+    $Arguments += @("-m", "venv", $VenvPath)
+    & $Command @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "Python virtual environment creation failed." }
 }
 
 $PythonExe = Join-Path $VenvPath "Scripts\python.exe"
@@ -26,20 +35,32 @@ if (-not (Test-Path $PythonExe)) {
     throw "Host virtualenv Python was not created: $PythonExe"
 }
 
+$VersionText = (& $PythonExe -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").Trim()
+$Version = [version]$VersionText
+if ($Version -lt [version]"3.10") {
+    throw "Python 3.10+ is required; virtualenv uses $VersionText."
+}
+
 & $PythonExe -m pip install --upgrade pip
-& $PythonExe -m pip install -e (Join-Path $HostRoot "host_app")
+if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
+& $PythonExe -m pip install -e "${UwbPackage}[serial]" -e $HostPackage
+if ($LASTEXITCODE -ne 0) { throw "Host/UWB dependency installation failed." }
 
-if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
-    throw "Flutter was not found in PATH. Install Flutter, then rerun install.ps1."
+@(
+    (Join-Path $RepoRoot "data\host"),
+    (Join-Path $RepoRoot "data\logs"),
+    (Join-Path $RepoRoot "data\runtime"),
+    (Join-Path $RepoRoot "data\uwb_spool\host")
+) | ForEach-Object { New-Item -ItemType Directory -Force -Path $_ | Out-Null }
+
+$Config = Join-Path $RepoRoot "src\host\config\host.env"
+$Example = Join-Path $RepoRoot "src\host\config\host.env.example"
+if (-not (Test-Path $Config)) {
+    Write-Host "Machine config is not created automatically."
+    Write-Host "Copy and edit when ready:"
+    Write-Host "  Copy-Item '$Example' '$Config'"
 }
 
-Push-Location (Join-Path $HostRoot "flutter_app")
-try {
-    & flutter pub get
-}
-finally {
-    Pop-Location
-}
-
-Write-Host "Host local dependencies are ready."
+Write-Host "Host Python runtime is ready: $PythonExe"
+Write-Host "Flutter SDK was not checked; it is needed only for build_web.ps1."
 Write-Host "Next: .\deploy\host_windows\build_web.ps1"

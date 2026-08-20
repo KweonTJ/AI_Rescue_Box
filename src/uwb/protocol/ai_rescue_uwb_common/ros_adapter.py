@@ -1,7 +1,8 @@
-"""Optional ROS 2/standalone adapter around :mod:`ai_rescue_uwb_common`.
+"""Optional ROS 2/standalone adapter around the Stage 2 UWB core.
 
-This module delays ROS and serial imports until execution, so `--help`, the
-common package, and all protocol tests work on development hosts without ROS 2.
+ROS and pyserial remain delayed imports.  Stage 5 adds only the reconnectable
+serial lifecycle; packet/chunk/SHA/ACK/NACK/spool behavior stays in the existing
+:mod:`ai_rescue_uwb_common` protocol and bridge modules.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .bridge import ArtifactBridgeCore, BridgeEvent, BridgeEventKind, TransferResult
+from .managed_serial import ManagedSerialTransport, SerialTransportStatus
 from .protocol import (
     DEFAULT_MAX_ARTIFACT_BYTES,
     ArtifactMetadata,
@@ -24,13 +26,19 @@ from .protocol import (
     generate_transfer_id,
 )
 from .spool import SpoolError, SpoolManager
-from .transport import FirmwareLineTransport, TransportError, create_memory_link
+from .transport import TransportError, create_memory_link
 
 
-DEFAULT_PORT = "/dev/ttyACM0"
 DEFAULT_BAUDRATE = 460800
 RECEIVED_ARTIFACT_QOS_DEPTH = 64
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _transient_artifact_qos(
@@ -54,20 +62,37 @@ def build_argument_parser(role: str) -> argparse.ArgumentParser:
         prog=f"uwb_{role}_bridge",
         description=f"AI Rescue Box {role.title()} UWB bridge",
     )
-    parser.add_argument("--port", default=DEFAULT_PORT, help="ESP32 serial port")
+    parser.add_argument(
+        "--port",
+        default=os.environ.get(
+            "AI_RESCUE_UWB_SERIAL_PORT", os.environ.get("AI_RESCUE_UWB_PORT", "")
+        ),
+        help="ESP32 serial port; blank starts in disconnected/unconfigured state",
+    )
     parser.add_argument(
         "--baudrate",
         "--baud",
         dest="baudrate",
         type=int,
-        default=DEFAULT_BAUDRATE,
+        default=int(
+            os.environ.get(
+                "AI_RESCUE_UWB_BAUD",
+                os.environ.get("AI_RESCUE_UWB_BAUDRATE", DEFAULT_BAUDRATE),
+            )
+        ),
         help=f"USB serial baud rate (default: {DEFAULT_BAUDRATE})",
     )
     parser.add_argument(
         "--spool-dir",
         type=Path,
-        default=Path("data/uwb_spool"),
+        default=Path(os.environ.get("AI_RESCUE_UWB_SPOOL", "data/uwb_spool")),
         help="spool root containing outgoing/incoming/completed/failed",
+    )
+    parser.add_argument(
+        "--auto-discover",
+        action="store_true",
+        default=_env_bool("AI_RESCUE_UWB_AUTO_DISCOVER", False),
+        help="select a port only when exactly one serial candidate is present",
     )
     parser.add_argument(
         "--no-ros",
@@ -77,13 +102,11 @@ def build_argument_parser(role: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--self-test",
         action="store_true",
-        help="run a mock end-to-end transfer without ROS, serial, or hardware",
+        help="run a mock transfer without ROS, serial, radio or hardware",
     )
     parser.add_argument("--send-artifact", type=Path, help="diagnostic file to send")
     parser.add_argument(
-        "--artifact-type",
-        default="mission_manifest",
-        help="artifact type for --send-artifact",
+        "--artifact-type", default="mission_manifest", help="type for --send-artifact"
     )
     parser.add_argument("--mission-id", default="diagnostic")
     parser.add_argument("--artifact-version", type=int, default=1)
@@ -97,6 +120,16 @@ def build_argument_parser(role: str) -> argparse.ArgumentParser:
     parser.add_argument("--application-ack-timeout", type=float, default=30.0)
     parser.add_argument("--max-repair-rounds", type=int, default=4)
     parser.add_argument("--abandoned-part-age-seconds", type=float, default=3600.0)
+    parser.add_argument("--serial-send-timeout", type=float, default=20.0)
+    parser.add_argument(
+        "--send-queue-limit",
+        type=int,
+        default=int(os.environ.get("AI_RESCUE_UWB_SEND_QUEUE_LIMIT", "32")),
+    )
+    parser.add_argument("--reconnect-initial-delay", type=float, default=0.25)
+    parser.add_argument("--reconnect-max-delay", type=float, default=3.0)
+    parser.add_argument("--reconnect-attempts", type=int, default=6)
+    parser.add_argument("--reconnect-cooldown", type=float, default=5.0)
     parser.add_argument(
         "--no-application-ack",
         action="store_true",
@@ -181,19 +214,37 @@ def run_self_test(role: str) -> int:
             jetson.close()
 
 
+def _managed_transport(args: argparse.Namespace) -> ManagedSerialTransport:
+    return ManagedSerialTransport(
+        str(args.port),
+        baudrate=int(args.baudrate),
+        ack_timeout=float(args.firmware_ack_timeout),
+        firmware_max_attempts=int(args.firmware_max_attempts),
+        reconnect_initial_delay=float(args.reconnect_initial_delay),
+        reconnect_max_delay=float(args.reconnect_max_delay),
+        reconnect_attempts=int(args.reconnect_attempts),
+        reconnect_cooldown=float(args.reconnect_cooldown),
+        send_timeout=float(args.serial_send_timeout),
+        max_pending_sends=int(args.send_queue_limit),
+        auto_discover=bool(args.auto_discover),
+    )
+
+
 def run_standalone(role: str, args: argparse.Namespace) -> int:
     try:
         spool = SpoolManager(args.spool_dir, max_artifact_bytes=args.max_artifact_bytes)
         spool.cleanup_abandoned_parts(
             age_seconds=args.abandoned_part_age_seconds, now=time.time
         )
-        transport = FirmwareLineTransport.open(
-            args.port,
-            baudrate=args.baudrate,
-            ack_timeout=args.firmware_ack_timeout,
-            max_attempts=args.firmware_max_attempts,
-        )
+        transport = _managed_transport(args)
         bridge: ArtifactBridgeCore
+
+        def status_callback(status: SerialTransportStatus) -> None:
+            port = status.active_port or status.configured_port or "<unconfigured>"
+            detail = f" error={status.last_error}" if status.last_error else ""
+            print(f"[SERIAL {status.state.upper()}] port={port}{detail}")
+
+        transport.add_status_listener(status_callback)
 
         def event_callback(event: BridgeEvent) -> None:
             _print_event(event)
@@ -211,7 +262,6 @@ def run_standalone(role: str, args: argparse.Namespace) -> int:
         )
         bridge.start()
         try:
-            print(f"[INFO] {role} bridge connected to {args.port} at {args.baudrate} baud")
             if args.send_artifact is not None:
                 metadata = ArtifactMetadata.from_file(
                     args.send_artifact,
@@ -279,21 +329,71 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
             self.declare_parameter("max_repair_rounds", args.max_repair_rounds)
             self.declare_parameter("abandoned_part_age_seconds", args.abandoned_part_age_seconds)
             self.declare_parameter("require_application_ack", True)
+            self.declare_parameter("serial_send_timeout", args.serial_send_timeout)
+            self.declare_parameter("send_queue_limit", args.send_queue_limit)
+            self.declare_parameter("reconnect_initial_delay", args.reconnect_initial_delay)
+            self.declare_parameter("reconnect_max_delay", args.reconnect_max_delay)
+            self.declare_parameter("reconnect_attempts", args.reconnect_attempts)
+            self.declare_parameter("reconnect_cooldown", args.reconnect_cooldown)
+            self.declare_parameter("auto_discover", args.auto_discover)
+
             self._port = str(self.get_parameter("port").value)
             self._baudrate = int(self.get_parameter("baudrate").value)
             self._spool = SpoolManager(
                 Path(str(self.get_parameter("spool_dir").value)),
                 max_artifact_bytes=int(self.get_parameter("max_artifact_bytes").value),
             )
-            self._core: ArtifactBridgeCore | None = None
-            self._open_error = ""
+            moved = self._spool.cleanup_abandoned_parts(
+                age_seconds=float(self.get_parameter("abandoned_part_age_seconds").value),
+                now=time.time,
+            )
+            if moved:
+                self.get_logger().warning(
+                    f"moved {moved} abandoned incoming part(s) to failed"
+                )
+            self._transport = ManagedSerialTransport(
+                self._port,
+                baudrate=self._baudrate,
+                ack_timeout=float(self.get_parameter("firmware_ack_timeout").value),
+                firmware_max_attempts=int(
+                    self.get_parameter("firmware_max_attempts").value
+                ),
+                reconnect_initial_delay=float(
+                    self.get_parameter("reconnect_initial_delay").value
+                ),
+                reconnect_max_delay=float(
+                    self.get_parameter("reconnect_max_delay").value
+                ),
+                reconnect_attempts=int(self.get_parameter("reconnect_attempts").value),
+                reconnect_cooldown=float(
+                    self.get_parameter("reconnect_cooldown").value
+                ),
+                send_timeout=float(self.get_parameter("serial_send_timeout").value),
+                max_pending_sends=int(self.get_parameter("send_queue_limit").value),
+                auto_discover=bool(self.get_parameter("auto_discover").value),
+                status_callback=self._on_serial_status,
+            )
+            self._core = ArtifactBridgeCore(
+                role,
+                self._spool,
+                self._transport,
+                stored_ack_timeout=float(self.get_parameter("stored_ack_timeout").value),
+                application_ack_timeout=float(
+                    self.get_parameter("application_ack_timeout").value
+                ),
+                max_repair_rounds=int(self.get_parameter("max_repair_rounds").value),
+                on_event=self._on_bridge_event,
+            )
+            self._core.start()
             self._callback_group = ReentrantCallbackGroup()
             self._goal_transfer_lock = threading.Lock()
             self._goal_transfers: dict[int, str] = {}
             status_qos = QoSProfile(depth=1)
             status_qos.reliability = ReliabilityPolicy.RELIABLE
             status_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-            self._status_publisher = self.create_publisher(UwbStatus, "/uwb/status", status_qos)
+            self._status_publisher = self.create_publisher(
+                UwbStatus, "/uwb/status", status_qos
+            )
             received_qos = _transient_artifact_qos(
                 QoSProfile, ReliabilityPolicy, DurabilityPolicy
             )
@@ -310,7 +410,10 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
                 callback_group=self._callback_group,
             )
             self._reconnect_service = self.create_service(
-                Reconnect, "/uwb/reconnect", self._reconnect, callback_group=self._callback_group
+                Reconnect,
+                "/uwb/reconnect",
+                self._reconnect,
+                callback_group=self._callback_group,
             )
             self._cancel_service = self.create_service(
                 CancelTransfer,
@@ -331,48 +434,17 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
                 callback_group=self._callback_group,
             )
             self._status_timer = self.create_timer(0.5, self._publish_status)
-            self._open_core()
 
-        def _open_core(self) -> bool:
-            if self._core is not None:
-                self._core.close()
-                self._core = None
-            try:
-                moved = self._spool.cleanup_abandoned_parts(
-                    age_seconds=float(self.get_parameter("abandoned_part_age_seconds").value),
-                    now=time.time,
-                )
-                if moved:
-                    self.get_logger().warning(
-                        f"moved {moved} abandoned incoming part(s) to failed"
-                    )
-                transport = FirmwareLineTransport.open(
-                    self._port,
-                    baudrate=self._baudrate,
-                    ack_timeout=float(self.get_parameter("firmware_ack_timeout").value),
-                    max_attempts=int(self.get_parameter("firmware_max_attempts").value),
-                )
-                self._core = ArtifactBridgeCore(
-                    role,
-                    self._spool,
-                    transport,
-                    stored_ack_timeout=float(self.get_parameter("stored_ack_timeout").value),
-                    application_ack_timeout=float(
-                        self.get_parameter("application_ack_timeout").value
-                    ),
-                    max_repair_rounds=int(self.get_parameter("max_repair_rounds").value),
-                    on_event=self._on_bridge_event,
-                )
-                self._core.start()
-                self._open_error = ""
+        def _on_serial_status(self, status: SerialTransportStatus) -> None:
+            port = status.active_port or status.configured_port or "<unconfigured>"
+            if status.connected:
                 self.get_logger().info(
-                    f"connected to {self._port} at {self._baudrate} baud"
+                    f"serial connected port={port} baud={status.baudrate}"
                 )
-                return True
-            except Exception as error:
-                self._open_error = str(error)
-                self.get_logger().error(f"serial bridge unavailable: {error}")
-                return False
+            elif status.last_error:
+                self.get_logger().warning(
+                    f"serial {status.state} port={port}: {status.last_error}"
+                )
 
         @staticmethod
         def _set_time(target: object, value: float) -> None:
@@ -387,27 +459,24 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
         def _publish_status(self) -> None:
             message = UwbStatus()
             message.role = role
-            if self._core is None:
-                message.bridge_running = True
-                message.serial_connected = False
-                message.peer_connected = False
-                message.transfer_state = "idle"
-                message.last_error_code = "serial_unavailable" if self._open_error else ""
-                message.last_error_message = self._open_error
-            else:
-                snapshot = self._core.snapshot()
-                message.bridge_running = snapshot.running
-                message.serial_connected = snapshot.serial_connected
-                message.peer_connected = snapshot.peer_connected
-                message.transfer_state = snapshot.transfer_state
-                message.transfer_id = snapshot.transfer_id
-                message.bytes_sent = snapshot.bytes_sent
-                message.bytes_received = snapshot.bytes_received
-                message.retransmission_count = snapshot.retransmissions
-                message.last_error_code = snapshot.last_error_code
-                message.last_error_message = snapshot.last_error_message
-                self._set_time(message.last_tx_time, snapshot.last_tx_time)
-                self._set_time(message.last_rx_time, snapshot.last_rx_time)
+            snapshot = self._core.snapshot()
+            serial = self._transport.status()
+            message.bridge_running = snapshot.running
+            message.serial_connected = serial.connected
+            message.peer_connected = snapshot.peer_connected and serial.connected
+            message.transfer_state = snapshot.transfer_state
+            message.transfer_id = snapshot.transfer_id
+            message.bytes_sent = snapshot.bytes_sent
+            message.bytes_received = snapshot.bytes_received
+            message.retransmission_count = snapshot.retransmissions
+            message.last_error_code = (
+                snapshot.last_error_code
+                if serial.connected
+                else ("serial_unconfigured" if serial.state == "unconfigured" else "serial_unavailable")
+            )
+            message.last_error_message = serial.last_error or snapshot.last_error_message
+            self._set_time(message.last_tx_time, snapshot.last_tx_time)
+            self._set_time(message.last_rx_time, snapshot.last_rx_time)
             self._status_publisher.publish(message)
 
         def _on_bridge_event(self, event: BridgeEvent) -> None:
@@ -425,28 +494,28 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
             message.sender = artifact.metadata.sender
             self._set_time(message.received_at, time.time())
             self._received_publisher.publish(message)
+            self.get_logger().info(
+                f"received transfer={artifact.transfer_id} "
+                f"type={artifact.metadata.artifact_type} bytes={artifact.metadata.file_size}"
+            )
 
         def _goal_callback(self, goal_request: object) -> object:
-            if self._core is None:
-                self.get_logger().warning("rejecting send goal: serial bridge unavailable")
+            del goal_request
+            serial = self._transport.status()
+            if serial.state == "unconfigured":
+                self.get_logger().warning("rejecting send goal: serial port unconfigured")
                 return GoalResponse.REJECT
             return GoalResponse.ACCEPT
 
         def _cancel_callback(self, goal_handle: object) -> object:
             with self._goal_transfer_lock:
                 transfer_id = self._goal_transfers.get(id(goal_handle))
-            if self._core is not None and transfer_id:
+            if transfer_id:
                 self._core.cancel_transfer(transfer_id)
             return CancelResponse.ACCEPT
 
         def _execute_send(self, goal_handle: object) -> object:
             result_message = SendArtifact.Result()
-            core = self._core
-            if core is None:
-                result_message.error_code = "serial_unavailable"
-                result_message.error_message = self._open_error
-                goal_handle.abort()
-                return result_message
             request = goal_handle.request
             source = Path(request.local_file_path)
             transfer_id = generate_transfer_id()
@@ -468,13 +537,17 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
                     priority=int(request.priority),
                 )
                 validate_goal_sha256(request.sha256, metadata.sha256)
+                self.get_logger().info(
+                    f"send type={metadata.artifact_type} mission={metadata.mission_id} "
+                    f"version={metadata.artifact_version} bytes={metadata.file_size}"
+                )
 
                 def feedback_callback(event: BridgeEvent) -> None:
                     if goal_handle.is_cancel_requested:
-                        core.cancel_transfer(event.transfer_id)
+                        self._core.cancel_transfer(event.transfer_id)
                     feedback = SendArtifact.Feedback()
                     feedback.transfer_id = event.transfer_id
-                    feedback.stage = event.message or core.snapshot().transfer_state
+                    feedback.stage = event.message or self._core.snapshot().transfer_state
                     feedback.total_chunks = event.total_chunks
                     feedback.completed_chunks = event.completed_chunks
                     feedback.progress = (
@@ -486,7 +559,7 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
                     feedback.bytes_sent = event.bytes_sent
                     goal_handle.publish_feedback(feedback)
 
-                outcome = core.send_artifact(
+                outcome = self._core.send_artifact(
                     source,
                     metadata,
                     transfer_id=transfer_id,
@@ -522,28 +595,26 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
                 goal_handle.canceled()
             else:
                 goal_handle.abort()
+            self.get_logger().info(
+                f"send result transfer={outcome.transfer_id} success={outcome.success} "
+                f"frame_ack={outcome.uwb_frame_ack} peer_stored={outcome.peer_saved} "
+                f"application_ack={outcome.application_ack} retries={outcome.retries}"
+            )
             return result_message
 
         def _reconnect(self, request: object, response: object) -> object:
             del request
-            response.success = self._open_core()
-            response.message = f"connected to {self._port}" if response.success else self._open_error
+            self._transport.request_reconnect()
+            response.success = True
+            response.message = "serial reconnect cycle requested"
             return response
 
         def _cancel_transfer(self, request: object, response: object) -> object:
-            if self._core is None:
-                response.success = False
-                response.message = "serial bridge unavailable"
-                return response
             response.success = self._core.cancel_transfer(request.transfer_id)
             response.message = "cancel requested" if response.success else "transfer not found"
             return response
 
         def _request_resend(self, request: object, response: object) -> object:
-            if self._core is None:
-                response.success = False
-                response.message = "serial bridge unavailable"
-                return response
             try:
                 self._core.request_resend(
                     request.transfer_id, tuple(int(value) for value in request.chunk_indices)
@@ -556,10 +627,6 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
             return response
 
         def _acknowledge_artifact(self, request: object, response: object) -> object:
-            if self._core is None:
-                response.success = False
-                response.message = "serial bridge unavailable"
-                return response
             try:
                 if request.applied:
                     self._core.acknowledge_applied(request.transfer_id)
@@ -573,9 +640,8 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
             return response
 
         def destroy_node(self) -> bool:
-            if self._core is not None:
-                self._core.close()
-                self._core = None
+            self._transport.remove_status_listener(self._on_serial_status)
+            self._core.close()
             self._action.destroy()
             return super().destroy_node()
 
@@ -597,6 +663,8 @@ def run_ros(role: str, args: argparse.Namespace, ros_args: Sequence[str]) -> int
 def main_for_role(role: str, argv: Sequence[str] | None = None) -> int:
     parser = build_argument_parser(role)
     args, remaining = parser.parse_known_args(argv)
+    if role not in {"host", "jetson"}:
+        parser.error("role must be host or jetson")
     if args.baudrate <= 0:
         parser.error("--baudrate must be positive")
     if not 0 <= args.priority <= 255:
@@ -605,12 +673,24 @@ def main_for_role(role: str, argv: Sequence[str] | None = None) -> int:
         parser.error(
             f"--max-artifact-bytes must be 1..{DEFAULT_MAX_ARTIFACT_BYTES}"
         )
-    if args.firmware_ack_timeout <= 0:
-        parser.error("--firmware-ack-timeout must be positive")
-    if args.firmware_max_attempts <= 0:
-        parser.error("--firmware-max-attempts must be positive")
-    if args.stored_ack_timeout <= 0 or args.application_ack_timeout <= 0:
-        parser.error("ACK timeouts must be positive")
+    positive_values = {
+        "--firmware-ack-timeout": args.firmware_ack_timeout,
+        "--firmware-max-attempts": args.firmware_max_attempts,
+        "--stored-ack-timeout": args.stored_ack_timeout,
+        "--application-ack-timeout": args.application_ack_timeout,
+        "--serial-send-timeout": args.serial_send_timeout,
+        "--reconnect-initial-delay": args.reconnect_initial_delay,
+        "--reconnect-max-delay": args.reconnect_max_delay,
+        "--reconnect-attempts": args.reconnect_attempts,
+        "--reconnect-cooldown": args.reconnect_cooldown,
+    }
+    for name, value in positive_values.items():
+        if value <= 0:
+            parser.error(f"{name} must be positive")
+    if args.send_queue_limit <= 0:
+        parser.error("--send-queue-limit must be positive")
+    if args.reconnect_max_delay < args.reconnect_initial_delay:
+        parser.error("--reconnect-max-delay must be >= --reconnect-initial-delay")
     if args.max_repair_rounds < 0:
         parser.error("--max-repair-rounds must be non-negative")
     if args.abandoned_part_age_seconds < 0:

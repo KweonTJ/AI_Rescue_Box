@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import os
 import queue
+import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
+
+try:  # POSIX advisory locking.
+    import fcntl  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - exercised on Windows.
+    fcntl = None  # type: ignore[assignment]
+
+try:  # Windows byte-range locking.
+    import msvcrt  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - exercised on POSIX.
+    msvcrt = None  # type: ignore[assignment]
 
 from .protocol import MAX_WIRE_PAYLOAD_BYTES
 
@@ -41,33 +50,83 @@ class LineTransport(Protocol):
 
 
 class ExclusivePortLock:
-    """Cross-process advisory lock preventing two bridges owning one port."""
+    """Cross-process advisory lock preventing two bridges owning one port.
+
+    ``fcntl`` is unavailable on Windows.  A one-byte ``msvcrt`` lock provides
+    the same single-owner invariant there while preserving the original POSIX
+    behaviour.  The lock file lives in the platform temporary directory; no
+    Linux-only ``/tmp`` path is imported by the Windows product runtime.
+    """
 
     def __init__(self, port: str, lock_directory: Path | None = None) -> None:
-        directory = Path("/tmp/ai_rescue_uwb_locks") if lock_directory is None else lock_directory
+        directory = (
+            Path(tempfile.gettempdir()) / "ai_rescue_uwb_locks"
+            if lock_directory is None
+            else Path(lock_directory)
+        )
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        key = hashlib.sha256(os.path.realpath(port).encode("utf-8")).hexdigest()[:20]
+        canonical_port = os.path.realpath(port) if port else port
+        key = hashlib.sha256(canonical_port.encode("utf-8")).hexdigest()[:20]
         self.path = directory / f"port-{key}.lock"
-        self._stream = self.path.open("a+", encoding="utf-8")
+        self._stream = self.path.open("a+b")
+        self._locked = False
         try:
-            fcntl.flock(self._stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
+            self._acquire(port)
+            # POSIX flock is independent of byte ranges, so a readable owner
+            # note is safe.  Windows msvcrt locks the first byte; leave that
+            # byte intact rather than truncating a locked region.
+            if fcntl is not None:
+                self._stream.seek(0)
+                self._stream.truncate()
+                self._stream.write(
+                    f"pid={os.getpid()}\nport={canonical_port}\n".encode("utf-8")
+                )
+                self._stream.flush()
+        except Exception:
             self._stream.close()
-            raise TransportError(f"serial port is already owned by another bridge: {port}") from error
-        self._stream.seek(0)
-        self._stream.truncate()
-        self._stream.write(f"pid={os.getpid()}\nport={os.path.realpath(port)}\n")
-        self._stream.flush()
+            raise
+
+    def _acquire(self, port: str) -> None:
+        try:
+            if fcntl is not None:
+                fcntl.flock(
+                    self._stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                )
+            elif msvcrt is not None:
+                self._stream.seek(0)
+                if self._stream.read(1) == b"":
+                    self._stream.seek(0)
+                    self._stream.write(b"\0")
+                    self._stream.flush()
+                self._stream.seek(0)
+                msvcrt.locking(self._stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:  # pragma: no cover - CPython supports one of the two.
+                raise TransportError(
+                    "this platform does not provide an advisory file-lock API"
+                )
+        except (BlockingIOError, OSError) as error:
+            raise TransportError(
+                f"serial port is already owned by another bridge: {port}"
+            ) from error
+        self._locked = True
 
     def close(self) -> None:
         if self._stream.closed:
             return
-        fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
-        self._stream.close()
+        try:
+            if self._locked:
+                if fcntl is not None:
+                    fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
+                elif msvcrt is not None:
+                    self._stream.seek(0)
+                    msvcrt.locking(self._stream.fileno(), msvcrt.LK_UNLCK, 1)
+        finally:
+            self._locked = False
+            self._stream.close()
 
 
 class FirmwareLineTransport:
-    """Adapter for the existing `[UWB ACK]` ESP32 USB-serial contract."""
+    """Adapter for the existing ``[UWB ACK]`` ESP32 USB-serial contract."""
 
     def __init__(
         self,
@@ -106,6 +165,8 @@ class FirmwareLineTransport:
         max_attempts: int = 3,
         serial_timeout: float = 0.1,
     ) -> "FirmwareLineTransport":
+        if not str(port).strip():
+            raise TransportError("serial port is not configured")
         if baudrate <= 0:
             raise TransportError("baudrate must be positive")
         port_lock = ExclusivePortLock(port)
@@ -124,7 +185,10 @@ class FirmwareLineTransport:
                     write_timeout=1.0,
                     exclusive=True,
                 )
-            except TypeError:
+            except (TypeError, ValueError):
+                # pyserial on Windows does not expose the POSIX-only
+                # ``exclusive`` keyword.  ExclusivePortLock still preserves
+                # the process-level single-owner contract.
                 connection = serial.Serial(
                     port=port,
                     baudrate=baudrate,
@@ -166,7 +230,9 @@ class FirmwareLineTransport:
                 if line == b"[UWB ACK]":
                     self._feedback.put((True, "[UWB ACK]"))
                 elif line.startswith(b"[UWB ERROR]"):
-                    self._feedback.put((False, line.decode("utf-8", errors="replace")))
+                    self._feedback.put(
+                        (False, line.decode("utf-8", errors="replace"))
+                    )
                 elif line.startswith(b"[UWB RETRY]"):
                     with self._retry_lock:
                         self._firmware_retry_count += 1
@@ -209,9 +275,7 @@ class FirmwareLineTransport:
                         firmware_retries = (
                             self._firmware_retry_count - retry_count_before
                         )
-                    return SendReceipt(
-                        True, attempt + firmware_retries, response
-                    )
+                    return SendReceipt(True, attempt + firmware_retries, response)
                 last_error = response
             raise TransportError(
                 f"link delivery failed after {self.max_attempts} attempts: {last_error}"

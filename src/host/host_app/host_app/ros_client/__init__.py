@@ -1,4 +1,8 @@
-"""Local ROS2 UWB Bridge abstractions (never Serial transports)."""
+"""Host-facing UWB bridge adapters.
+
+``SerialBridgeClient`` is the Windows product default. ``RclpyBridgeClient``
+remains an optional development adapter for an already prepared ROS 2 host.
+"""
 
 from .bridge_client import (
     ArtifactRequest,
@@ -12,6 +16,7 @@ from .bridge_client import (
     SendFeedback,
     SendResult,
 )
+from .serial_client import SerialBridgeClient
 
 __all__ = [
     "ArtifactRequest",
@@ -24,4 +29,5 @@ __all__ = [
     "RclpyBridgeClient",
     "SendFeedback",
     "SendResult",
+    "SerialBridgeClient",
 ]

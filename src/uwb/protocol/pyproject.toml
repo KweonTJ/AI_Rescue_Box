@@ -4,10 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-rescue-uwb-common"
-version = "0.1.0"
-description = "UWB artifact protocol and spool for AI Rescue Box"
+version = "0.2.0"
+description = "UWB artifact protocol, spool and managed serial runtime for AI Rescue Box"
 requires-python = ">=3.10"
 dependencies = []
+
+[project.optional-dependencies]
+serial = ["pyserial>=3.5,<4"]
+test = ["pytest>=7,<9"]
 
 [tool.setuptools.packages.find]
 where = ["."]

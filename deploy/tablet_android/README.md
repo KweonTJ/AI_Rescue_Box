@@ -1,47 +1,56 @@
-# Galaxy Tab Android Client
+# Galaxy Tab Android APK
 
-`src/d_slam/flutter_app`은 Stage 1.5부터 **Galaxy Tab용 Android APK Source**다. APK는 UI client이며 SLAM, YOLO, Depth, UWB protocol 연산을 수행하지 않는다.
+Source는 `src/d_slam/flutter_app`이며 기본 Jetson API URL은 `http://192.168.50.1:8001`이다. URL은 Flutter build-time define으로 변경되므로 Hotspot, USB network, 같은 LAN을 모두 지원한다.
 
-## Build debug APK
-
-저장소 루트에서:
+## Debug APK
 
 ```bash
-./deploy/tablet_android/build_apk.sh
+./deploy/tablet_android/build_apk.sh --debug \
+  --api-url http://192.168.50.1:8001
 ```
 
-기본 Jetson API:
+산출물:
 
-```text
-http://192.168.50.1:8001
-```
+- `dist/tablet/ai-rescue-box-tablet-debug.apk`
+- 동일 파일의 `.sha256`
 
-다른 Jetson hotspot/USB Network/사설 LAN 주소를 사용할 때는 한 번만 지정한다.
+## Signed Release APK
+
+개인 keystore를 저장소 **밖**에 준비한다. Stage 5A에서는 key를 만들거나 commit하지 않는다.
 
 ```bash
-JETSON_API_BASE_URL=http://192.168.10.1:8001 \
-  ./deploy/tablet_android/build_apk.sh
+cp src/d_slam/flutter_app/android/key.properties.example \
+   src/d_slam/flutter_app/android/key.properties
 ```
 
-Flutter 내부 설정 키는 `JETSON_API_BASE_URL`이고 WebSocket URL은 같은 base에서 자동 계산한다. 특별히 다른 WebSocket endpoint가 필요한 개발 환경에서만 `JETSON_WS_URL` dart-define을 사용할 수 있다.
+실제 `storeFile`, alias, password를 로컬 `key.properties`에 기록한 뒤 실행한다.
 
-Stage 1에서 Android app source는 남아 있었지만 Gradle Wrapper binary가 trim되어 있었다. `build_apk.sh`는 설치된 Flutter SDK와 일치하는 Wrapper/build scaffold만 임시 생성해 보완한 뒤 기존 `android/app`, Manifest, Dart source를 그대로 빌드한다. 별도 `rescue_app` 또는 외부 서버 source는 사용하지 않는다.
-
-Debug APK 출력:
-
-```text
-src/d_slam/flutter_app/build/app/outputs/flutter-apk/app-debug.apk
+```bash
+./deploy/tablet_android/build_apk.sh --release \
+  --api-url http://192.168.50.1:8001
 ```
 
-Android Manifest에는 `INTERNET` permission과 로컬 Jetson HTTP 접근을 위한 cleartext 허용만 유지하며 custom CA/trust-all 설정은 사용하지 않는다.
+산출물은 `dist/tablet/ai-rescue-box-tablet-release.apk`다. `key.properties`, `*.jks`, `*.keystore`는 Git에 넣지 않는다.
 
-## Runtime
+WebSocket endpoint가 API URL과 다른 환경에서만 `--ws-url`을 추가한다. 보통 앱은 API URL을 기준으로 연결하므로 생략한다.
 
-1. APK를 Galaxy Tab에 설치한다.
-2. Tab을 Jetson hotspot, USB Network 또는 같은 로컬 LAN에 연결한다.
-3. 빌드 때 지정한 Jetson API 주소가 해당 Jetson IP/port와 일치하는지 확인한다.
-4. 앱을 실행한다.
+## Stage 5B 설치
 
-Jetson이 꺼졌거나 네트워크가 끊기면 기존 controller가 예외를 UI 상태로 보존하며 앱 프로세스를 종료하지 않는다. 상태 화면에서 `Jetson 연결 중 / 연결됨 / 연결 실패`를 확인할 수 있다.
+USB debugging을 사용하는 경우:
 
-Release signing, Play Store, hotspot 자동 설정은 이 단계 범위가 아니다.
+```bash
+adb devices
+adb install -r dist/tablet/ai-rescue-box-tablet-debug.apk
+# 또는 서명된 release APK
+```
+
+직접 설치 시 APK를 Galaxy Tab으로 옮겨 설치한다. Android에서 unknown-app install 허용 범위는 설치 후 다시 제한한다.
+
+설치 후 검증 순서:
+
+1. Tablet와 Jetson을 Hotspot/USB network/LAN 중 하나로 연결
+2. 브라우저에서 `http://<JETSON_IP>:8001/api/v1/health` 확인
+3. 앱 실행 후 Mission/Map/Result 조회
+4. 인터넷을 끈 상태에서 반복
+
+Stage 5A에서는 APK build source/signing flow만 준비하며 실제 Galaxy Tab 설치와 Tablet↔Jetson 연결은 검증하지 않는다.

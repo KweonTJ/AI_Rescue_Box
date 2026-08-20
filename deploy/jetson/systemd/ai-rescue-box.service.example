@@ -1,0 +1,17 @@
+# TEMPLATE ONLY. Edit User and repository path. Do not enable during Stage 5A.
+[Unit]
+Description=AI Rescue Box Jetson full stack
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=USER
+WorkingDirectory=/home/USER/AI_Rescue_Box
+ExecStart=/home/USER/AI_Rescue_Box/deploy/jetson/start.sh
+ExecStop=/home/USER/AI_Rescue_Box/deploy/jetson/stop.sh
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

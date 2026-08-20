@@ -1,3 +1,3 @@
--r jetson_app/requirements.txt
--r jetson_app/requirements-api.txt
+# Stage 5 pure-Python serial dependency. Jetson application dependencies live
+# under src/d_slam/jetson_app and are installed by deploy/jetson/install.sh.
 pyserial>=3.5,<4

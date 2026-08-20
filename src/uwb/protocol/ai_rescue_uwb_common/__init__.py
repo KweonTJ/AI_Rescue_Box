@@ -1,8 +1,8 @@
 """Hardware-independent UWB artifact transport building blocks.
 
 The ESP32 firmware exposes a newline-delimited, acknowledged link with a
-maximum application payload of 111 bytes.  This package deliberately contains
-no ROS or serial imports so both bridge packages and unit tests can reuse it.
+maximum application payload of 111 bytes.  ROS imports remain optional; the
+managed serial layer imports pyserial only when a hardware connection is made.
 """
 
 from .bridge import (
@@ -12,6 +12,12 @@ from .bridge import (
     BridgeSnapshot,
     OutboundStage,
     TransferResult,
+)
+from .managed_serial import (
+    ManagedSerialTransport,
+    SerialPortCandidate,
+    SerialTransportStatus,
+    discover_serial_ports,
 )
 from .protocol import (
     ACK_STAGE_APPLIED,
@@ -45,6 +51,7 @@ from .transport import (
     FirmwareLineTransport,
     InMemoryEndpoint,
     LineTransport,
+    SendReceipt,
     TransportError,
     create_memory_link,
 )
@@ -69,10 +76,14 @@ __all__ = [
     "IncomingArtifact",
     "LineTransport",
     "MAX_WIRE_PAYLOAD_BYTES",
+    "ManagedSerialTransport",
     "MetaPacket",
     "NackPacket",
     "OutboundStage",
     "ProtocolError",
+    "SendReceipt",
+    "SerialPortCandidate",
+    "SerialTransportStatus",
     "SpoolError",
     "SpoolManager",
     "StartPacket",
@@ -81,6 +92,7 @@ __all__ = [
     "UnsafeFilenameError",
     "create_memory_link",
     "decode_packet",
+    "discover_serial_ports",
     "encode_packet",
     "generate_transfer_id",
     "packetize_file",

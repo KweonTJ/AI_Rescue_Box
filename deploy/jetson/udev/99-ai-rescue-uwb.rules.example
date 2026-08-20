@@ -1,0 +1,2 @@
+# TEMPLATE ONLY — replace placeholders with values measured on the actual ESP32.
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="<VID>", ATTRS{idProduct}=="<PID>", SYMLINK+="ai-rescue-uwb", GROUP="dialout", MODE="0660"
