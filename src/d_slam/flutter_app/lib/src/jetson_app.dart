@@ -74,7 +74,9 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
     );
     if (confirmed != true || !mounted) return;
     await widget.controller.selectMission(mission);
-    if (!mounted || widget.controller.error != null) return;
+    if (!mounted || !navigatorContext.mounted || widget.controller.error != null) {
+      return;
+    }
     ScaffoldMessenger.of(navigatorContext).showSnackBar(
       SnackBar(content: Text('$missionId · v$version ACTIVE 전환 완료')),
     );
