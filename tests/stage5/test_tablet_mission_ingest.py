@@ -61,7 +61,7 @@ def test_tablet_ingest_stores_v1_without_activating(tmp_path: Path) -> None:
     assert stored.manifest.robot_start.yaw == pytest.approx(0.0)
     assert stored.manifest.entrances[0].x == pytest.approx(-2.0)
     assert stored.manifest.entrances[0].y == pytest.approx(0.0, abs=1e-9)
-    assert manager.current_mission() is None
+    assert manager.current_mission_ref() is None
 
     for name in (
         "base_map.png",
@@ -96,7 +96,7 @@ def test_tablet_edit_reuses_map_and_creates_next_version(tmp_path: Path) -> None
     assert (second.directory / "base_map_display.png").read_bytes() == (
         first.directory / "base_map_display.png"
     ).read_bytes()
-    assert manager.current_mission() is None
+    assert manager.current_mission_ref() is None
 
 
 def test_tablet_edit_cannot_skip_versions(tmp_path: Path) -> None:
