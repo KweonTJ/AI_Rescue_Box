@@ -30,6 +30,15 @@ abstract interface class RescueTransport {
     Map<String, Object?> query = const {},
   });
 
+  Future<JsonMap> multipart(
+    String path, {
+    required Map<String, String> fields,
+    String fileField = 'base_map',
+    String? filename,
+    Uint8List? bytes,
+    Map<String, Object?> query = const {},
+  });
+
   Future<void> close();
 }
 
@@ -121,6 +130,36 @@ final class HttpRescueTransport implements RescueTransport {
         'Content-Type': 'application/octet-stream',
       })
       ..bodyBytes = bytes;
+    final streamed = await _client.send(request).timeout(requestTimeout);
+    final response = await http.Response.fromStream(streamed);
+    return requireJsonMap(_decode('POST', uri, response));
+  }
+
+  @override
+  Future<JsonMap> multipart(
+    String path, {
+    required Map<String, String> fields,
+    String fileField = 'base_map',
+    String? filename,
+    Uint8List? bytes,
+    Map<String, Object?> query = const {},
+  }) async {
+    if ((filename == null) != (bytes == null)) {
+      throw ArgumentError('multipart filename and bytes must be provided together');
+    }
+    final uri = endpoints.resolve(path, query);
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Accept'] = 'application/json'
+      ..fields.addAll(fields);
+    if (filename != null && bytes != null) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          fileField,
+          bytes,
+          filename: filename,
+        ),
+      );
+    }
     final streamed = await _client.send(request).timeout(requestTimeout);
     final response = await http.Response.fromStream(streamed);
     return requireJsonMap(_decode('POST', uri, response));
