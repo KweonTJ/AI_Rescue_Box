@@ -1,9 +1,9 @@
 string mission_id
 uint32 mission_version
 string base_map_path
-string manifest_path
+string mission_manifest_path
 ---
 bool success
+string state
+string error_code
 string message
-string active_mission_id
-uint32 active_mission_version
