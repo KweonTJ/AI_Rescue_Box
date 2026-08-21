@@ -1,7 +1,9 @@
 string mission_id
 uint32 mission_version
-uint32 plan_version
-string plan_path
+uint32 approved_plan_version
+string approved_plan_path
 ---
 bool success
+string state
+string error_code
 string message
