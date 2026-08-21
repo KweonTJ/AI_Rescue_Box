@@ -89,5 +89,15 @@ class RosUwbArtifactTransport:
     def send_map_preview(self, metadata: Mapping[str, Any], path: Path, *, priority: int = 0) -> Mapping[str, Any]:
         return self._send(path, artifact_type="map_preview", mission_id=str(metadata["mission_id"]), artifact_version=int(metadata["artifact_version"]), priority=priority)
 
+    def send_mission_state(self, state: Mapping[str, Any], path: Path, *, priority: int = 0) -> Mapping[str, Any]:
+        """Persist a tiny ACTIVE Mission metadata snapshot in the UWB outbox."""
+        return self._send(
+            path,
+            artifact_type="mission_state",
+            mission_id=str(state["mission_id"]),
+            artifact_version=int(state["artifact_version"]),
+            priority=max(priority, 180),
+        )
+
 
 __all__ = ["RosUwbArtifactTransport"]
