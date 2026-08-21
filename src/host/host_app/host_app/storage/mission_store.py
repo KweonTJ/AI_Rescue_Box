@@ -144,14 +144,14 @@ class MissionStore:
         return target
 
     def load_manifest(self, mission_id: str, mission_version: int) -> MissionManifest:
-        path = self.mission_dir(manifest_id := mission_id, mission_version) / "mission_manifest.json"
+        path = self.mission_dir(mission_id, mission_version) / "mission_manifest.json"
         try:
             with path.open("r", encoding="utf-8") as source:
                 value = json.load(source)
         except (OSError, json.JSONDecodeError) as error:
             raise ValidationError(f"cannot load mission manifest: {error}") from error
         manifest = MissionManifest.from_dict(value)
-        if manifest.mission_id != manifest_id or manifest.mission_version != mission_version:
+        if manifest.mission_id != mission_id or manifest.mission_version != mission_version:
             raise ValidationError("stored manifest path and identity do not match")
         return manifest
 
