@@ -15,7 +15,12 @@ from ..errors import MapImportError, ValidationError
 
 
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png"}
-FORMAT_SUFFIXES = {"JPEG": {".jpg", ".jpeg"}, "PNG": {".png"}}
+FORMAT_SUFFIXES = {
+    "JPEG": {".jpg", ".jpeg"},
+    "MPO": {".jpg", ".jpeg"},
+    "PNG": {".png"},
+}
+JPEG_FORMATS = {"JPEG", "MPO"}
 
 
 def sha256_file(path: Path) -> str:
@@ -106,7 +111,8 @@ class RasterMapImporter(MapImporter):
             raise
         except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
             raise MapImportError("선택한 파일은 올바른 JPEG 또는 PNG 이미지가 아닙니다.") from error
-        return image, detected_format, (width, height)
+        normalized_format = "JPEG" if detected_format in JPEG_FORMATS else detected_format
+        return image, normalized_format, (width, height)
 
     def import_map(
         self,
@@ -153,7 +159,11 @@ class RasterMapImporter(MapImporter):
             temporary = Path(temporary_name)
             try:
                 normalized.save(temporary, **save_options)
-                with temporary.open("rb") as completed:
+                # Windows may reject fsync() on a read-only descriptor. Re-open
+                # the completed temporary image with write capability before
+                # forcing it to disk, while keeping the atomic replace flow.
+                with temporary.open("rb+") as completed:
+                    completed.flush()
                     os.fsync(completed.fileno())
                 os.replace(temporary, destination)
             except Exception:
