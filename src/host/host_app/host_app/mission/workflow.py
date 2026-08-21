@@ -81,7 +81,6 @@ class HostTransferWorkflow:
 
     def _timeout_for_path(self, path: Path) -> float:
         """Return a bounded size-aware deadline for low-bandwidth UWB artifacts."""
-
         file_size = Path(path).stat().st_size
         estimated = (
             TRANSFER_TIMEOUT_MARGIN_SECONDS
@@ -274,7 +273,13 @@ class ReceivedArtifactLoader:
         if digest != notice.sha256:
             raise ValidationError("수신 artifact SHA-256이 metadata와 다릅니다.")
         active_mission = self.expected_mission_id()
-        if active_mission is not None and notice.mission_id != active_mission:
+        # mission_state is allowed to *change* the current Mission. Other
+        # incoming operational artifacts must continue to match the active one.
+        if (
+            notice.artifact_kind != "mission_state"
+            and active_mission is not None
+            and notice.mission_id != active_mission
+        ):
             raise ValidationError("수신 artifact mission_id가 현재 임무와 다릅니다.")
         return path
 
@@ -307,6 +312,7 @@ class ReceivedArtifactLoader:
     @staticmethod
     def _atomic_state(path: Path, state: Mapping[str, object]) -> None:
         data = json.dumps(state, sort_keys=True, indent=2, ensure_ascii=False).encode("utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
         part = path.with_name(f".{path.name}.{os.getpid()}.part")
         try:
             with part.open("wb") as stream:
@@ -347,14 +353,7 @@ class ReceivedArtifactLoader:
         return getattr(callback, "__self__", None) if callback is not None else None
 
     def _preserve_review_overlay(self, semantic: SemanticResult) -> None:
-        """Rebase the previous Host review overlay onto a newly reconstructed version.
-
-        ReviewSession intentionally keeps source semantics and operator edits separate.
-        The Host API owns those sessions; this adapter only copies the public edit
-        overlay after its normal semantic callback creates the new version. Missing
-        source IDs are preserved as explicit conflicts rather than silently dropped.
-        """
-
+        """Rebase the previous Host review overlay onto a newly reconstructed version."""
         owner = self._review_owner(self.on_semantic_result)
         reviews = getattr(owner, "_reviews", None)
         revisions = getattr(owner, "_review_revisions", None)
@@ -468,6 +467,89 @@ class ReceivedArtifactLoader:
                 },
             )
 
+    @staticmethod
+    def _validate_mission_state(
+        value: Mapping[str, object], notice: ReceivedArtifactNotice
+    ) -> MissionManifest:
+        if value.get("schema_version") != "1.0":
+            raise ValidationError("unsupported mission_state schema_version")
+        if value.get("artifact_type") != "mission_state":
+            raise ValidationError("mission_state artifact_type is invalid")
+        if value.get("mission_id") != notice.mission_id:
+            raise ValidationError("mission_state mission_id differs from transfer metadata")
+        if value.get("artifact_version") != notice.artifact_version:
+            raise ValidationError("mission_state version differs from transfer metadata")
+        if value.get("state") != "ACTIVE":
+            raise ValidationError("mission_state must represent ACTIVE")
+        mission_version = value.get("mission_version")
+        if isinstance(mission_version, bool) or not isinstance(mission_version, int) or mission_version < 1:
+            raise ValidationError("mission_state mission_version must be positive")
+        raw_manifest = value.get("manifest")
+        if not isinstance(raw_manifest, Mapping):
+            raise ValidationError("mission_state manifest must be an object")
+        manifest = MissionManifest.from_dict(raw_manifest)
+        if manifest.mission_id != notice.mission_id:
+            raise ValidationError("mission_state manifest mission_id is inconsistent")
+        if manifest.mission_version != mission_version:
+            raise ValidationError("mission_state manifest version is inconsistent")
+        return manifest
+
+    def _apply_mission_state_default(
+        self,
+        state: Mapping[str, object],
+        manifest: MissionManifest,
+        notice: ReceivedArtifactNotice,
+    ) -> None:
+        owner = self._review_owner(self.on_semantic_result)
+        store = getattr(owner, "store", None)
+        storage_lock = getattr(owner, "_storage_lock", None)
+        lock = getattr(owner, "_lock", None)
+        events = getattr(owner, "events", None)
+        data_root = getattr(owner, "data_root", None)
+        if store is None or storage_lock is None or lock is None or data_root is None:
+            raise ValidationError("Host Mission metadata mirror is unavailable")
+
+        global_state_path = Path(data_root) / "remote_mission_state.json"
+        with storage_lock:
+            if global_state_path.is_file() and not global_state_path.is_symlink():
+                previous = self._read_object(global_state_path)
+                previous_version = previous.get("artifact_version", 0)
+                if isinstance(previous_version, int) and not isinstance(previous_version, bool):
+                    if notice.artifact_version < previous_version:
+                        return
+                    if notice.artifact_version == previous_version:
+                        if dict(previous) == dict(state):
+                            return
+                        raise ValidationError("mission_state artifact_version was reused with different content")
+
+            target = store.mission_dir(manifest.mission_id, manifest.mission_version)
+            if target.is_symlink():
+                raise ValidationError("Host Mission mirror path is unsafe")
+            target.mkdir(parents=True, exist_ok=True)
+            manifest_path = target / "mission_manifest.json"
+            canonical = manifest.to_dict()
+            if manifest_path.exists():
+                if manifest_path.is_symlink() or store.load_json(manifest_path) != canonical:
+                    raise ValidationError("Host already stores different Mission metadata for this version")
+            else:
+                self._atomic_state(manifest_path, canonical)
+            self._atomic_state(target / "remote_mission_state.json", state)
+            self._atomic_state(global_state_path, state)
+
+        with lock:
+            owner._active_mission = (manifest.mission_id, manifest.mission_version)
+        if events is not None:
+            events.publish(
+                "mission.remote_activated",
+                {
+                    "mission_id": manifest.mission_id,
+                    "mission_version": manifest.mission_version,
+                    "artifact_version": notice.artifact_version,
+                    "transfer_id": notice.transfer_id,
+                    "source": "jetson",
+                },
+            )
+
     def _received(self, notice: ReceivedArtifactNotice) -> None:
         threading.Thread(
             target=self._load,
@@ -487,7 +569,11 @@ class ReceivedArtifactLoader:
     def _load(self, notice: ReceivedArtifactNotice) -> None:
         try:
             path = self._validate_file(notice)
-            if notice.artifact_kind == "semantic_result":
+            if notice.artifact_kind == "mission_state":
+                state = self._read_object(path)
+                manifest = self._validate_mission_state(state, notice)
+                self._apply_mission_state_default(state, manifest, notice)
+            elif notice.artifact_kind == "semantic_result":
                 value = self._read_object(path)
                 semantic = SemanticResult(value)
                 if semantic.mission_id != notice.mission_id:
@@ -526,10 +612,6 @@ class ReceivedArtifactLoader:
                     state = outcome.state
                     if outcome.applied:
                         self._persist_state(path, state)
-                # Duplicate/stale retransmissions are application-idempotent and
-                # ACKed without reapplying. A newly reconstructed state flows
-                # through the existing semantic-result callback so WebSocket,
-                # review, storage and UI behavior stay intact.
                 if outcome.applied:
                     self._apply_semantic_callback(SemanticResult(state), notice)
             elif notice.artifact_kind == "urgent_event":
