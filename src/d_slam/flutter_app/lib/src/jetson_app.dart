@@ -3,12 +3,14 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:rescue_api_client/rescue_api_client.dart';
 
 import 'jetson_controller.dart';
 
 part 'dashboard.dart';
+part 'mission_management.dart';
 part 'mission_map_canvas.dart';
 part 'mission_panel.dart';
 part 'mission_projection.dart';
@@ -29,11 +31,8 @@ final class RescueJetsonApp extends StatefulWidget {
 }
 
 class _RescueJetsonAppState extends State<RescueJetsonApp> {
-  // Deliberately starts at the selector on every Flutter cold launch. A
-  // previously ACTIVE Jetson mission may be labelled as current, but it never
-  // auto-navigates the operator past this explicit choice.
-  bool _showMissionSelector = true;
   final _navigatorKey = GlobalKey<NavigatorState>();
+  int _selectedPage = 0;
 
   @override
   void initState() {
@@ -46,7 +45,7 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _selectMission(JsonMap mission) async {
+  Future<void> _activateMission(JsonMap mission) async {
     final missionId = _asString(mission['mission_id']) ?? 'unknown';
     final version = _asInt(mission['mission_version'] ?? mission['version']) ?? 0;
     final name = _asString(mission['mission_name']) ?? missionId;
@@ -55,8 +54,10 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
     final confirmed = await showDialog<bool>(
       context: navigatorContext,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('이 구조도를 사용하시겠습니까?'),
-        content: Text('$name\n$missionId · v$version'),
+        title: const Text('이 Mission을 ACTIVE로 전환하시겠습니까?'),
+        content: Text(
+          '$name\n$missionId · v$version\n\nACTIVE 전환 후 로봇 runtime은 이 버전의 구조도와 설정을 사용합니다.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -65,7 +66,7 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
           FilledButton(
             key: const Key('mission-select-confirm'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('사용'),
+            child: const Text('ACTIVE 전환'),
           ),
         ],
       ),
@@ -73,11 +74,13 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
     if (confirmed != true || !mounted) return;
     await widget.controller.selectMission(mission);
     if (!mounted || widget.controller.error != null) return;
-    setState(() => _showMissionSelector = false);
+    ScaffoldMessenger.of(navigatorContext).showSnackBar(
+      SnackBar(content: Text('$missionId · v$version ACTIVE 전환 완료')),
+    );
   }
 
-  void _chooseAnotherMission() {
-    setState(() => _showMissionSelector = true);
+  void _openActivePage() {
+    setState(() => _selectedPage = 1);
   }
 
   @override
@@ -106,15 +109,45 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
         ),
         useMaterial3: true,
       ),
-      home: _showMissionSelector
-          ? _MissionSelector(
+      home: Scaffold(
+        body: IndexedStack(
+          index: _selectedPage,
+          children: [
+            _MissionManagementHome(controller: widget.controller),
+            _MissionSelector(
               controller: widget.controller,
-              onSelect: _selectMission,
-            )
-          : _Dashboard(
-              controller: widget.controller,
-              onChooseAnotherMission: _chooseAnotherMission,
+              onSelect: _activateMission,
             ),
+            _Dashboard(
+              controller: widget.controller,
+              onChooseAnotherMission: _openActivePage,
+            ),
+          ],
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _selectedPage,
+          onDestinationSelected: (value) {
+            setState(() => _selectedPage = value);
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.folder_copy_outlined),
+              selectedIcon: Icon(Icons.folder_copy),
+              label: 'Mission 관리',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.play_circle_outline),
+              selectedIcon: Icon(Icons.play_circle),
+              label: 'ACTIVE',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.monitor_heart_outlined),
+              selectedIcon: Icon(Icons.monitor_heart),
+              label: '운영',
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
