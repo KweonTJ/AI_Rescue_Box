@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rescue_api_client/rescue_api_client.dart';
-import 'package:rescue_api_client/src/host_app.dart';
+import 'package:rescue_api_client/src/host_console_app.dart';
 import 'package:rescue_api_client/src/host_controller.dart';
 
 class _FakeTransport implements RescueTransport {
@@ -52,15 +52,18 @@ class _FakeTransport implements RescueTransport {
 }
 
 void main() {
-  testWidgets('Host app builds its first screen with a mock backend', (
+  testWidgets('Host starts as monitoring console without floorplan upload', (
     tester,
   ) async {
     final controller = HostController(RestHostBackend(_FakeTransport()));
-    await tester.pumpWidget(RescueHostApp(controller: controller));
+    await tester.pumpWidget(RescueHostConsoleApp(controller: controller));
     await tester.pump();
 
-    expect(find.byType(RescueHostApp), findsOneWidget);
+    expect(find.byType(RescueHostConsoleApp), findsOneWidget);
     expect(find.text('AI Rescue Box · Host'), findsOneWidget);
-    expect(find.text('임무'), findsOneWidget);
+    expect(find.text('관제'), findsOneWidget);
+    expect(find.text('분석·검토'), findsOneWidget);
+    expect(find.text('JPEG/PNG 구조도 업로드'), findsNothing);
+    expect(find.text('임무 생성 및 UWB 전송'), findsNothing);
   });
 }
