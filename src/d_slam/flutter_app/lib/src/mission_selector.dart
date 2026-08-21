@@ -12,7 +12,17 @@ class _MissionSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     final apiAddress = controller.apiBaseUri?.toString() ?? '기본 Jetson API 주소';
     return Scaffold(
-      appBar: AppBar(title: const Text('AI Rescue Box')),
+      appBar: AppBar(
+        title: const Text('ACTIVE Mission'),
+        actions: [
+          IconButton(
+            tooltip: 'Mission 목록 새로고침',
+            onPressed: controller.busy ? null : controller.refresh,
+            icon: const Icon(Icons.refresh),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -22,10 +32,13 @@ class _MissionSelector extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('구조도 선택', style: Theme.of(context).textTheme.headlineMedium),
+                  Text(
+                    '실제 사용할 Mission 선택',
+                    style: Theme.of(context).textTheme.headlineMedium,
+                  ),
                   const SizedBox(height: 6),
                   Text(
-                    'Host에서 UWB로 수신·검증되어 Jetson에 저장된 Mission만 표시합니다.',
+                    'Mission 관리에서 STORED된 버전 중 하나를 명시적으로 ACTIVE로 전환합니다.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 18),
@@ -49,8 +62,8 @@ class _MissionSelector extends StatelessWidget {
                     const Expanded(
                       child: _MissionSelectorMessage(
                         icon: Icons.folder_off_outlined,
-                        title: 'Host에서 수신한 구조도가 없습니다.',
-                        body: 'Host에서 Mission을 전송하면 검증된 구조도가 여기에 표시됩니다.',
+                        title: '저장된 Mission이 없습니다.',
+                        body: 'Mission 관리에서 새 구조도를 등록하면 여기에 표시됩니다.',
                       ),
                     )
                   else
@@ -58,7 +71,7 @@ class _MissionSelector extends StatelessWidget {
                       child: ListView.separated(
                         key: const Key('mission-selector-list'),
                         itemCount: controller.missions.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 12),
+                        separatorBuilder: (_, _) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
                           final mission = controller.missions[index];
                           return _MissionSelectorCard(
@@ -146,7 +159,7 @@ class _MissionSelectorCard extends StatelessWidget {
       key: Key('mission-card-$missionId-v$version'),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: controller.busy ? null : onTap,
+        onTap: controller.busy || active ? null : onTap,
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
@@ -174,8 +187,8 @@ class _MissionSelectorCard extends StatelessWidget {
                       spacing: 8,
                       runSpacing: 6,
                       children: [
-                        _MiniLabel(text: verified ? '검증됨' : '검증 상태 미확인', good: verified),
-                        if (active) const _MiniLabel(text: '현재 사용 중', good: true),
+                        _MiniLabel(text: verified ? '검증됨' : '저장됨', good: verified),
+                        if (active) const _MiniLabel(text: '현재 ACTIVE', good: true),
                         if (received != null) _MiniLabel(text: received),
                       ],
                     ),
@@ -185,8 +198,8 @@ class _MissionSelectorCard extends StatelessWidget {
               const SizedBox(width: 12),
               FilledButton(
                 key: Key('select-$missionId-v$version'),
-                onPressed: controller.busy ? null : onTap,
-                child: Text(active ? '이 구조도 사용' : '선택'),
+                onPressed: controller.busy || active ? null : onTap,
+                child: Text(active ? '현재 ACTIVE' : 'ACTIVE 전환'),
               ),
             ],
           ),
