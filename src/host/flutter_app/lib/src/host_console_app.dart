@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -63,6 +64,72 @@ class _HostConsoleShell extends StatefulWidget {
 
 class _HostConsoleShellState extends State<_HostConsoleShell> {
   int page = 0;
+  int _seenEventSequence = 0;
+  bool _syncingActive = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _seenEventSequence = widget.controller.lastEventSequence;
+    widget.controller.addListener(_controllerChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_syncActiveMission());
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_controllerChanged);
+    super.dispose();
+  }
+
+  void _controllerChanged() {
+    final sequence = widget.controller.lastEventSequence;
+    if (sequence <= _seenEventSequence) return;
+    _seenEventSequence = sequence;
+    unawaited(_syncActiveMission());
+  }
+
+  Future<void> _syncActiveMission() async {
+    if (_syncingActive) return;
+    _syncingActive = true;
+    try {
+      final controller = widget.controller;
+      final status = await controller.backend.status();
+      controller.backendStatus = status;
+      final rawActive = status['active_mission'];
+      if (rawActive is! Map) return;
+      final active = Map<String, dynamic>.from(rawActive);
+      final id = _consoleString(active, const ['mission_id']);
+      final version = _consoleInt(active, const ['mission_version', 'version']);
+      if (id == null || version == null || version < 1) return;
+
+      final identityChanged =
+          controller.missionId != id || controller.missionVersion != version;
+      if (identityChanged || controller.currentMission == null) {
+        final manifest = await controller.backend.getMission(id, version);
+        controller.currentMission = manifest;
+        controller.updateMissionFields(
+          id: id,
+          version: version,
+          name: _consoleString(manifest, const ['mission_name']) ?? id,
+        );
+      }
+      // With missionId/version synchronized, the existing review flow can load
+      // semantic_result and build/send approved_plan without Host map upload.
+      await controller.refreshResults();
+    } on Object {
+      // Host stays usable when Jetson/UWB is temporarily unavailable. Existing
+      // controller error/event surfaces continue to report connection failures.
+    } finally {
+      _syncingActive = false;
+    }
+  }
+
+  Future<void> _refreshAll() async {
+    await widget.controller.refreshStatus();
+    await _syncActiveMission();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -74,7 +141,7 @@ class _HostConsoleShellState extends State<_HostConsoleShell> {
           _ConnectionBadge(controller: controller),
           IconButton(
             tooltip: '상태 새로고침',
-            onPressed: controller.busy ? null : controller.refreshStatus,
+            onPressed: controller.busy ? null : _refreshAll,
             icon: const Icon(Icons.refresh),
           ),
           const SizedBox(width: 8),
@@ -141,7 +208,11 @@ class _MonitorPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mission = controller.currentMission ?? const <String, dynamic>{};
+    final statusActive = controller.backendStatus['active_mission'];
+    final active = statusActive is Map
+        ? Map<String, dynamic>.from(statusActive)
+        : const <String, dynamic>{};
+    final mission = controller.currentMission ?? active;
     final missionId = _consoleString(mission, const ['mission_id']) ??
         (controller.missionId.isEmpty ? null : controller.missionId);
     final missionVersion = _consoleInt(
