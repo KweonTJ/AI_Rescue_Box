@@ -34,6 +34,10 @@ PreviewCallback = Callable[[Path, ReceivedArtifactNotice], object]
 ErrorCallback = Callable[[str, ReceivedArtifactNotice], None]
 UrgentCallback = Callable[[Mapping[str, object], ReceivedArtifactNotice], object]
 
+TRANSFER_TIMEOUT_MARGIN_SECONDS = 30.0
+TRANSFER_TIMEOUT_RATE_FLOOR_BYTES_PER_SECOND = 1024.0
+TRANSFER_TIMEOUT_MAX_SECONDS = 900.0
+
 
 def map_preview_base_map_version(path: Path) -> int:
     return read_map_preview_metadata(path).base_map_version
@@ -75,14 +79,30 @@ class HostTransferWorkflow:
         self.bridge = bridge
         self.transfer_timeout = parsed_timeout
 
+    def _timeout_for_path(self, path: Path) -> float:
+        """Return a bounded size-aware deadline for low-bandwidth UWB artifacts."""
+
+        file_size = Path(path).stat().st_size
+        estimated = (
+            TRANSFER_TIMEOUT_MARGIN_SECONDS
+            + float(file_size) / TRANSFER_TIMEOUT_RATE_FLOOR_BYTES_PER_SECOND
+        )
+        return max(
+            self.transfer_timeout,
+            min(TRANSFER_TIMEOUT_MAX_SECONDS, estimated),
+        )
+
     def _wait_for_transfer(
         self,
         future: Future[SendResult],
         stage: str,
         transfer_id: Callable[[], str],
+        *,
+        timeout: float | None = None,
     ) -> SendResult:
+        actual_timeout = self.transfer_timeout if timeout is None else float(timeout)
         try:
-            return future.result(timeout=self.transfer_timeout)
+            return future.result(timeout=actual_timeout)
         except FutureTimeoutError as error:
             future.cancel()
             known_transfer_id = transfer_id()
@@ -93,7 +113,7 @@ class HostTransferWorkflow:
                     pass
             raise TimeoutError(
                 f"{stage} transfer did not finish within "
-                f"{self.transfer_timeout:g} seconds"
+                f"{actual_timeout:g} seconds"
             ) from error
 
     def send_initial_mission(
@@ -123,7 +143,10 @@ class HostTransferWorkflow:
 
                 base_future = self.bridge.send_artifact(base_request, base_feedback)
                 base_result = self._wait_for_transfer(
-                    base_future, "base_map", lambda: base_transfer_id[0]
+                    base_future,
+                    "base_map",
+                    lambda: base_transfer_id[0],
+                    timeout=self._timeout_for_path(base_map_path),
                 )
                 if not base_result.success:
                     output.set_result(MissionSendResult(False, base_result, None))
@@ -149,6 +172,7 @@ class HostTransferWorkflow:
                     manifest_future,
                     "mission_manifest",
                     lambda: manifest_transfer_id[0],
+                    timeout=self._timeout_for_path(manifest_path),
                 )
                 output.set_result(
                     MissionSendResult(
@@ -188,7 +212,10 @@ class HostTransferWorkflow:
                 send_future = self.bridge.send_artifact(request, feedback)
                 output.set_result(
                     self._wait_for_transfer(
-                        send_future, "approved_plan", lambda: transfer_id[0]
+                        send_future,
+                        "approved_plan",
+                        lambda: transfer_id[0],
+                        timeout=self._timeout_for_path(plan_path),
                     )
                 )
             except Exception as error:
