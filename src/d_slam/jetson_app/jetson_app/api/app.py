@@ -1,16 +1,28 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..config import load_config
 from ..map_preview import OccupancyPreviewRenderer
 from ..mission import MissionManager
+from ..mission.tablet_ingest import TabletMissionIngestor
 from ..rescue_map import SemanticRescueMapRenderer
 from ..runtime import Stage3Runtime
 from ..stage4 import Stage4Processor
@@ -65,6 +77,8 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
             map_alignment_source=runtime.map_alignment_for,
         )
 
+    tablet_ingestor = TabletMissionIngestor(service.manager)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if runtime is not None:
@@ -111,6 +125,85 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
     def mission_detail(mission_id: str, mission_version: int):
         return call(service.mission_detail, mission_id, mission_version)
 
+    @app.post("/api/v1/tablet/missions", status_code=201)
+    async def create_tablet_mission(
+        manifest: Annotated[str, Form()],
+        base_map: Annotated[UploadFile | None, File()] = None,
+        reuse_from_version: Annotated[int | None, Form()] = None,
+    ):
+        """Store a Tablet-authored Mission without making it ACTIVE.
+
+        ``manifest`` is an image-space JSON draft.  ``base_map`` is required for
+        a new Mission or when its image changes.  Existing Mission edits may
+        omit it and reuse a prior version via ``reuse_from_version``.
+        """
+
+        try:
+            draft = json.loads(manifest)
+        except json.JSONDecodeError as error:
+            raise HTTPException(422, "manifest form field must contain JSON") from error
+        if not isinstance(draft, dict):
+            raise HTTPException(422, "manifest form field must contain a JSON object")
+
+        filename: str | None = None
+        content: bytes | None = None
+        if base_map is not None:
+            filename = base_map.filename
+            chunks = bytearray()
+            try:
+                while True:
+                    chunk = await base_map.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    chunks.extend(chunk)
+                    if len(chunks) > service.manager.max_map_bytes:
+                        raise HTTPException(
+                            413,
+                            "Tablet base map exceeds the configured Mission size limit",
+                        )
+            finally:
+                await base_map.close()
+            content = bytes(chunks)
+
+        def store():
+            return call(
+                tablet_ingestor.store,
+                draft,
+                base_map_filename=filename,
+                base_map_bytes=content,
+                reuse_from_version=reuse_from_version,
+            )
+
+        applied = await asyncio.to_thread(store)
+        detail = call(
+            service.mission_detail,
+            applied.manifest.mission_id,
+            applied.manifest.mission_version,
+        )
+        service.events.publish(
+            "mission.stored",
+            {
+                "mission_id": applied.manifest.mission_id,
+                "mission_version": applied.manifest.mission_version,
+                "source": "tablet",
+            },
+        )
+        return {
+            **detail,
+            "state": "STORED",
+            "processing": {
+                "state": "ready",
+                "display_url": (
+                    f"/api/v1/missions/{applied.manifest.mission_id}/"
+                    f"{applied.manifest.mission_version}/display-map.png"
+                ),
+                "wall_mask_url": (
+                    f"/api/v1/missions/{applied.manifest.mission_id}/"
+                    f"{applied.manifest.mission_version}/wall-mask.png"
+                ),
+            },
+        }
+
     @app.post("/api/v1/missions/{mission_id}/{mission_version}/select")
     def select_mission(mission_id: str, mission_version: int):
         return call(service.select_mission, mission_id, mission_version)
@@ -118,6 +211,38 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
     @app.get("/api/v1/missions/{mission_id}/{mission_version}/base-map.png")
     def base_map(mission_id: str, mission_version: int):
         return Response(call(service.base_map_png, mission_id, mission_version), media_type="image/png")
+
+    @app.get("/api/v1/missions/{mission_id}/{mission_version}/display-map.png")
+    def display_map(mission_id: str, mission_version: int):
+        # Older UWB-created Missions predate the derived display artifact.  They
+        # remain usable by falling back to the canonical base-map conversion.
+        call(service.mission_detail, mission_id, mission_version)
+        path = service.manager.mission_directory(mission_id, mission_version) / "base_map_display.png"
+        if path.is_file() and not path.is_symlink():
+            return Response(path.read_bytes(), media_type="image/png")
+        return Response(call(service.base_map_png, mission_id, mission_version), media_type="image/png")
+
+    @app.get("/api/v1/missions/{mission_id}/{mission_version}/wall-mask.png")
+    def wall_mask(mission_id: str, mission_version: int):
+        call(service.mission_detail, mission_id, mission_version)
+        path = service.manager.mission_directory(mission_id, mission_version) / "wall_mask.png"
+        if not path.is_file() or path.is_symlink():
+            raise HTTPException(404, "no processed wall mask is stored for this Mission")
+        return Response(path.read_bytes(), media_type="image/png")
+
+    @app.get("/api/v1/missions/{mission_id}/{mission_version}/processing")
+    def processing(mission_id: str, mission_version: int):
+        call(service.mission_detail, mission_id, mission_version)
+        path = service.manager.mission_directory(mission_id, mission_version) / "processing.json"
+        if not path.is_file() or path.is_symlink():
+            raise HTTPException(404, "no processing metadata is stored for this Mission")
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise HTTPException(422, "processing metadata is unreadable") from error
+        if not isinstance(value, dict):
+            raise HTTPException(422, "processing metadata is invalid")
+        return value
 
     @app.get("/api/v1/map/current")
     def live_map(): return call(service.live_map)
