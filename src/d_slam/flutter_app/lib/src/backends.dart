@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'api_client.dart';
@@ -57,7 +58,14 @@ abstract interface class JetsonBackend {
   Future<JsonMap> health();
   Future<JsonMap> status();
   Future<List<JsonMap>> listMissions();
+  Future<JsonMap> getMission(String missionId, int missionVersion);
   Future<JsonMap?> currentMission();
+  Future<JsonMap> storeTabletMission(
+    JsonMap draft, {
+    String? filename,
+    Uint8List? bytes,
+    int? reuseFromVersion,
+  });
   Future<JsonMap> selectMission(String missionId, int missionVersion);
   Future<JsonMap> analyze();
   Future<JsonMap> currentResult();
@@ -80,7 +88,20 @@ final class RestJetsonBackend implements JetsonBackend {
   @override Future<JsonMap> health() => _getObject('api/v1/health');
   @override Future<JsonMap> status() => _getObject('api/v1/status');
   @override Future<List<JsonMap>> listMissions() async { final value = await transport.get('api/v1/missions'); if (value is List) return jsonObjectList(value); final object = _object(value); return jsonObjectList(object['items'] ?? object['missions'] ?? const []); }
+  @override Future<JsonMap> getMission(String missionId, int missionVersion) => _getObject('api/v1/missions/$missionId/$missionVersion');
   @override Future<JsonMap?> currentMission() async { try { return await _getObject('api/v1/missions/current'); } on ApiFailure catch (failure) { if (failure.statusCode == 404) return null; rethrow; } }
+  @override Future<JsonMap> storeTabletMission(JsonMap draft, {String? filename, Uint8List? bytes, int? reuseFromVersion}) async {
+    final response = await transport.multipart(
+      'api/v1/tablet/missions',
+      fields: {
+        'manifest': jsonEncode(draft),
+        if (reuseFromVersion != null) 'reuse_from_version': reuseFromVersion.toString(),
+      },
+      filename: filename,
+      bytes: bytes,
+    );
+    return _object(response);
+  }
   @override Future<JsonMap> selectMission(String missionId, int missionVersion) => _postObject('api/v1/missions/$missionId/$missionVersion/select');
   @override Future<JsonMap> analyze() => _postObject('api/v1/analysis', const {'priorities': <String, int>{}});
   @override Future<JsonMap> currentResult() => _getObject('api/v1/results/current');
