@@ -12,7 +12,7 @@ from typing import Any, Mapping
 from PIL import Image, UnidentifiedImageError
 
 from ..errors import StaleVersionError, ValidationError
-from ..map_editor.importers import sha256_file
+from ..map_editor.importers import JPEG_FORMATS, sha256_file
 from ..mission.models import MissionManifest, SemanticResult, positive_int, validate_mission_id
 from ..mission.review import ApprovedPlan
 from .atomic import atomic_copy, atomic_write_json
@@ -64,8 +64,12 @@ class MissionStore:
                 image.verify()
         except (OSError, UnidentifiedImageError) as error:
             raise ValidationError("original map is not a valid JPEG or PNG") from error
-        expected = "PNG" if suffix == ".png" else "JPEG"
-        if image_format != expected:
+        valid_content = (
+            image_format == "PNG"
+            if suffix == ".png"
+            else image_format in JPEG_FORMATS
+        )
+        if not valid_content:
             raise ValidationError("original map content and extension do not match")
         return suffix, sha256_file(source), file_size, width, height
 
@@ -140,14 +144,14 @@ class MissionStore:
         return target
 
     def load_manifest(self, mission_id: str, mission_version: int) -> MissionManifest:
-        path = self.mission_dir(mission_id, mission_version) / "mission_manifest.json"
+        path = self.mission_dir(manifest_id := mission_id, mission_version) / "mission_manifest.json"
         try:
             with path.open("r", encoding="utf-8") as source:
                 value = json.load(source)
         except (OSError, json.JSONDecodeError) as error:
             raise ValidationError(f"cannot load mission manifest: {error}") from error
         manifest = MissionManifest.from_dict(value)
-        if manifest.mission_id != mission_id or manifest.mission_version != mission_version:
+        if manifest.mission_id != manifest_id or manifest.mission_version != mission_version:
             raise ValidationError("stored manifest path and identity do not match")
         return manifest
 
