@@ -444,8 +444,12 @@ class ManagedSerialTransport:
                     self._condition.notify_all()
                 self._notify(callbacks, snapshot)
 
+            # FirmwareLineTransport already owns a serial reader thread.  Poll
+            # its decoded inbound queue without blocking so a successful
+            # outbound frame can be followed immediately by the next 66-byte
+            # artifact chunk instead of paying a 50 ms receive wait per frame.
             try:
-                line = connection.receive_line(timeout=0.05)
+                line = connection.receive_line(timeout=0.0)
             except Exception as error:
                 with self._condition:
                     self._disconnect_locked(str(error))
