@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from ..config import load_config
 from ..map_preview import OccupancyPreviewRenderer
 from ..mission import MissionManager
+from ..mission.state_sync import MissionStatePublisher
 from ..mission.tablet_ingest import TabletMissionIngestor
 from ..rescue_map import SemanticRescueMapRenderer
 from ..runtime import Stage3Runtime
@@ -78,6 +79,7 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
         )
 
     tablet_ingestor = TabletMissionIngestor(service.manager)
+    mission_state_publisher = MissionStatePublisher(service.manager, service.transport)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -131,13 +133,7 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
         base_map: Annotated[UploadFile | None, File()] = None,
         reuse_from_version: Annotated[int | None, Form()] = None,
     ):
-        """Store a Tablet-authored Mission without making it ACTIVE.
-
-        ``manifest`` is an image-space JSON draft.  ``base_map`` is required for
-        a new Mission or when its image changes.  Existing Mission edits may
-        omit it and reuse a prior version via ``reuse_from_version``.
-        """
-
+        """Store a Tablet-authored Mission without making it ACTIVE."""
         try:
             draft = json.loads(manifest)
         except json.JSONDecodeError as error:
@@ -206,21 +202,39 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
 
     @app.post("/api/v1/missions/{mission_id}/{mission_version}/select")
     def select_mission(mission_id: str, mission_version: int):
-        return call(service.select_mission, mission_id, mission_version)
+        selected = call(service.select_mission, mission_id, mission_version)
+        try:
+            sync = dict(mission_state_publisher.publish_active(mission_id, mission_version))
+            event_name = "mission.state_sync_queued" if sync.get("success") else "mission.state_sync_local_only"
+            service.events.publish(event_name, sync)
+        except Exception as error:
+            sync = {"success": False, "state": "sync_failed", "error": str(error)}
+            service.events.publish(
+                "mission.state_sync_failed",
+                {
+                    "mission_id": mission_id,
+                    "mission_version": mission_version,
+                    "error": str(error),
+                },
+            )
+        # Local ACTIVE selection must remain usable even when UWB/Host is down.
+        return {**selected, "mission_state_sync": sync}
 
-    @app.get("/api/v1/missions/{mission_id}/{mission_version}/base-map.png")
-    def base_map(mission_id: str, mission_version: int):
-        return Response(call(service.base_map_png, mission_id, mission_version), media_type="image/png")
-
-    @app.get("/api/v1/missions/{mission_id}/{mission_version}/display-map.png")
-    def display_map(mission_id: str, mission_version: int):
-        # Older UWB-created Missions predate the derived display artifact.  They
-        # remain usable by falling back to the canonical base-map conversion.
+    def processed_or_original(mission_id: str, mission_version: int) -> bytes:
         call(service.mission_detail, mission_id, mission_version)
         path = service.manager.mission_directory(mission_id, mission_version) / "base_map_display.png"
         if path.is_file() and not path.is_symlink():
-            return Response(path.read_bytes(), media_type="image/png")
-        return Response(call(service.base_map_png, mission_id, mission_version), media_type="image/png")
+            return path.read_bytes()
+        return call(service.base_map_png, mission_id, mission_version)
+
+    @app.get("/api/v1/missions/{mission_id}/{mission_version}/base-map.png")
+    def base_map(mission_id: str, mission_version: int):
+        # Tablet/operations use the neutral OpenCV display map when available.
+        return Response(processed_or_original(mission_id, mission_version), media_type="image/png")
+
+    @app.get("/api/v1/missions/{mission_id}/{mission_version}/display-map.png")
+    def display_map(mission_id: str, mission_version: int):
+        return Response(processed_or_original(mission_id, mission_version), media_type="image/png")
 
     @app.get("/api/v1/missions/{mission_id}/{mission_version}/wall-mask.png")
     def wall_mask(mission_id: str, mission_version: int):
