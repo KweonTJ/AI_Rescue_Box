@@ -181,214 +181,296 @@ class ArtifactMetadata:
         try:
             document = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ProtocolError("artifact metadata is not valid UTF-8 JSON") from error
-        if not isinstance(document, Mapping):
-            raise ProtocolError("artifact metadata must be a JSON object")
+            raise ProtocolError("metadata is not valid UTF-8 JSON") from error
+        if len(payload) > MAX_METADATA_BYTES:
+            raise ProtocolError(f"metadata exceeds the {MAX_METADATA_BYTES}-byte limit")
+        if not isinstance(document, dict):
+            raise ProtocolError("metadata JSON must be an object")
+        expected = {
+            "artifact_type",
+            "mission_id",
+            "artifact_version",
+            "file_name",
+            "file_size",
+            "sha256",
+            "sender",
+            "priority",
+            "schema_version",
+            "extra",
+        }
+        if set(document) != expected:
+            missing = sorted(expected - set(document))
+            unknown = sorted(set(document) - expected)
+            raise ProtocolError(f"metadata fields differ: missing={missing}, unknown={unknown}")
         try:
             return cls(**document)
         except TypeError as error:
-            raise ProtocolError("artifact metadata contains invalid fields") from error
+            raise ProtocolError("metadata field types are invalid") from error
 
 
 @dataclass(frozen=True)
 class StartPacket:
     transfer_id: str
-    metadata_size: int
     metadata_chunks: int
+    data_chunks: int
 
 
 @dataclass(frozen=True)
-class MetadataPacket:
+class MetaPacket:
     transfer_id: str
-    chunk_index: int
+    index: int
     data: bytes
 
 
 @dataclass(frozen=True)
 class DataPacket:
     transfer_id: str
-    chunk_index: int
+    index: int
     data: bytes
 
 
 @dataclass(frozen=True)
 class EndPacket:
     transfer_id: str
-    chunk_count: int
 
 
 @dataclass(frozen=True)
 class AckPacket:
     transfer_id: str
     stage: str
-    success: bool
-    detail: str = ""
 
 
 @dataclass(frozen=True)
-class MissingPacket:
+class NackPacket:
     transfer_id: str
-    chunk_indices: tuple[int, ...]
+    missing_indices: tuple[int, ...]
 
 
 @dataclass(frozen=True)
 class CancelPacket:
     transfer_id: str
+    reason: str = "cancelled"
 
 
 WirePacket: TypeAlias = (
-    StartPacket
-    | MetadataPacket
-    | DataPacket
-    | EndPacket
-    | AckPacket
-    | MissingPacket
-    | CancelPacket
+    StartPacket | MetaPacket | DataPacket | EndPacket | AckPacket | NackPacket | CancelPacket
 )
 
 
-def _b64_encode(data: bytes) -> str:
-    return base64.b64encode(data).decode("ascii")
+def _validate_chunk(index: int, data: bytes) -> None:
+    if not isinstance(index, int) or index < 0 or index >= MAX_CHUNK_COUNT:
+        raise ProtocolError("chunk index is outside the supported range")
+    if not data or len(data) > DATA_CHUNK_BYTES:
+        raise ProtocolError(f"chunk must contain 1..{DATA_CHUNK_BYTES} bytes")
 
 
-def _b64_decode(data: str) -> bytes:
+def _encode_line(parts: Iterable[str]) -> bytes:
     try:
-        return base64.b64decode(data.encode("ascii"), validate=True)
-    except (UnicodeEncodeError, binascii.Error) as error:
-        raise ProtocolError("invalid Base64 data") from error
-
-
-def _positive_index(value: int, name: str, maximum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < maximum:
-        raise ProtocolError(f"{name} is outside the allowed range")
-    return value
-
-
-def _encode_packet(packet: WirePacket) -> str:
-    if isinstance(packet, StartPacket):
-        _validate_transfer_id(packet.transfer_id)
-        if not 0 < packet.metadata_size <= MAX_METADATA_BYTES:
-            raise ProtocolError("metadata_size is outside the allowed range")
-        if not 0 < packet.metadata_chunks <= MAX_METADATA_CHUNKS:
-            raise ProtocolError("metadata_chunks is outside the allowed range")
-        fields = [
-            WIRE_PREFIX,
-            "S",
-            packet.transfer_id,
-            str(packet.metadata_size),
-            str(packet.metadata_chunks),
-        ]
-    elif isinstance(packet, MetadataPacket):
-        _validate_transfer_id(packet.transfer_id)
-        _positive_index(packet.chunk_index, "metadata chunk_index", MAX_METADATA_CHUNKS)
-        if not packet.data or len(packet.data) > DATA_CHUNK_BYTES:
-            raise ProtocolError("metadata chunk data is outside the allowed range")
-        fields = [WIRE_PREFIX, "M", packet.transfer_id, str(packet.chunk_index), _b64_encode(packet.data)]
-    elif isinstance(packet, DataPacket):
-        _validate_transfer_id(packet.transfer_id)
-        _positive_index(packet.chunk_index, "data chunk_index", MAX_CHUNK_COUNT)
-        if not packet.data or len(packet.data) > DATA_CHUNK_BYTES:
-            raise ProtocolError("data chunk data is outside the allowed range")
-        fields = [WIRE_PREFIX, "D", packet.transfer_id, str(packet.chunk_index), _b64_encode(packet.data)]
-    elif isinstance(packet, EndPacket):
-        _validate_transfer_id(packet.transfer_id)
-        if not 0 <= packet.chunk_count <= MAX_CHUNK_COUNT:
-            raise ProtocolError("chunk_count is outside the allowed range")
-        fields = [WIRE_PREFIX, "E", packet.transfer_id, str(packet.chunk_count)]
-    elif isinstance(packet, AckPacket):
-        _validate_transfer_id(packet.transfer_id)
-        if packet.stage not in ACK_STAGES:
-            raise ProtocolError("ack stage is unsupported")
-        fields = [
-            WIRE_PREFIX,
-            "A",
-            packet.transfer_id,
-            packet.stage,
-            "1" if packet.success else "0",
-            _b64_encode(packet.detail.encode("utf-8")) if packet.detail else "-",
-        ]
-    elif isinstance(packet, MissingPacket):
-        _validate_transfer_id(packet.transfer_id)
-        if not packet.chunk_indices:
-            raise ProtocolError("missing chunk list must not be empty")
-        for value in packet.chunk_indices:
-            _positive_index(value, "missing chunk_index", MAX_CHUNK_COUNT)
-        fields = [
-            WIRE_PREFIX,
-            "R",
-            packet.transfer_id,
-            ",".join(str(value) for value in packet.chunk_indices),
-        ]
-    elif isinstance(packet, CancelPacket):
-        _validate_transfer_id(packet.transfer_id)
-        fields = [WIRE_PREFIX, "C", packet.transfer_id]
-    else:  # pragma: no cover - exhaustive type guard
-        raise ProtocolError("unsupported packet type")
-    encoded = "|".join(fields)
-    if len(encoded.encode("utf-8")) > MAX_WIRE_PAYLOAD_BYTES:
-        raise ProtocolError("encoded packet exceeds firmware payload capacity")
-    return encoded
+        line = ",".join(parts).encode("ascii")
+    except UnicodeEncodeError as error:
+        raise ProtocolError("wire control fields must be ASCII") from error
+    if not line or len(line) > MAX_WIRE_PAYLOAD_BYTES:
+        raise ProtocolError(
+            f"encoded packet is {len(line)} bytes; maximum is {MAX_WIRE_PAYLOAD_BYTES}"
+        )
+    if b"\r" in line or b"\n" in line:
+        raise ProtocolError("wire packet must contain one line")
+    return line
 
 
 def encode_packet(packet: WirePacket) -> bytes:
-    return (_encode_packet(packet) + "\n").encode("utf-8")
+    transfer_id = _validate_transfer_id(packet.transfer_id)
+    if isinstance(packet, StartPacket):
+        if not 1 <= packet.metadata_chunks <= MAX_CHUNK_COUNT:
+            raise ProtocolError("metadata_chunks is outside the supported range")
+        if not 1 <= packet.data_chunks <= MAX_CHUNK_COUNT:
+            raise ProtocolError("data_chunks is outside the supported range")
+        return _encode_line(
+            (WIRE_PREFIX, "S", transfer_id, str(packet.metadata_chunks), str(packet.data_chunks))
+        )
+    if isinstance(packet, (MetaPacket, DataPacket)):
+        _validate_chunk(packet.index, packet.data)
+        kind = "M" if isinstance(packet, MetaPacket) else "D"
+        encoded = base64.b64encode(packet.data).decode("ascii")
+        return _encode_line((WIRE_PREFIX, kind, transfer_id, str(packet.index), encoded))
+    if isinstance(packet, EndPacket):
+        return _encode_line((WIRE_PREFIX, "E", transfer_id))
+    if isinstance(packet, AckPacket):
+        if packet.stage not in ACK_STAGES:
+            raise ProtocolError(f"unsupported ACK stage: {packet.stage}")
+        return _encode_line((WIRE_PREFIX, "A", transfer_id, packet.stage))
+    if isinstance(packet, NackPacket):
+        if not packet.missing_indices:
+            raise ProtocolError("NACK must list at least one missing chunk")
+        if any(index < 0 or index >= MAX_CHUNK_COUNT for index in packet.missing_indices):
+            raise ProtocolError("NACK contains an invalid chunk index")
+        indices = ";".join(str(index) for index in packet.missing_indices)
+        return _encode_line((WIRE_PREFIX, "N", transfer_id, indices))
+    if isinstance(packet, CancelPacket):
+        if _TOKEN_RE.fullmatch(packet.reason) is None:
+            raise ProtocolError("cancel reason must be a lowercase protocol token")
+        return _encode_line((WIRE_PREFIX, "C", transfer_id, packet.reason))
+    raise TypeError(f"unsupported packet type: {type(packet)!r}")
+
+
+def _parse_nonnegative_int(
+    text: str, field_name: str, *, maximum: int = MAX_CHUNK_COUNT - 1
+) -> int:
+    if not text or not text.isascii() or not text.isdecimal():
+        raise ProtocolError(f"{field_name} must be a non-negative decimal integer")
+    value = int(text)
+    if value > maximum:
+        raise ProtocolError(f"{field_name} is outside the supported range")
+    return value
 
 
 def decode_packet(line: bytes | str) -> WirePacket:
-    text = line.decode("utf-8") if isinstance(line, bytes) else str(line)
-    text = text.rstrip("\r\n")
-    if not text.startswith(f"{WIRE_PREFIX}|"):
-        raise ProtocolError("packet prefix is invalid")
-    fields = text.split("|")
-    if len(fields) < 3:
-        raise ProtocolError("packet is truncated")
-    packet_type = fields[1]
-    transfer_id = _validate_transfer_id(fields[2])
+    if isinstance(line, str):
+        try:
+            raw = line.encode("ascii")
+        except UnicodeEncodeError as error:
+            raise ProtocolError("wire packet is not ASCII") from error
+    else:
+        raw = bytes(line)
+    if raw.endswith(b"\n"):
+        raw = raw[:-1]
+    if raw.endswith(b"\r"):
+        raw = raw[:-1]
+    if not raw or len(raw) > MAX_WIRE_PAYLOAD_BYTES or b"\r" in raw or b"\n" in raw:
+        raise ProtocolError("wire packet is empty, oversized, or contains multiple lines")
     try:
-        if packet_type == "S" and len(fields) == 5:
-            return StartPacket(transfer_id, int(fields[3]), int(fields[4]))
-        if packet_type == "M" and len(fields) == 5:
-            return MetadataPacket(transfer_id, int(fields[3]), _b64_decode(fields[4]))
-        if packet_type == "D" and len(fields) == 5:
-            return DataPacket(transfer_id, int(fields[3]), _b64_decode(fields[4]))
-        if packet_type == "E" and len(fields) == 4:
-            return EndPacket(transfer_id, int(fields[3]))
-        if packet_type == "A" and len(fields) == 6:
-            if fields[4] not in {"0", "1"}:
-                raise ProtocolError("ack success flag is invalid")
-            detail = "" if fields[5] == "-" else _b64_decode(fields[5]).decode("utf-8")
-            return AckPacket(transfer_id, fields[3], fields[4] == "1", detail)
-        if packet_type == "R" and len(fields) == 4:
-            indices = tuple(int(value) for value in fields[3].split(",") if value)
-            return MissingPacket(transfer_id, indices)
-        if packet_type == "C" and len(fields) == 3:
-            return CancelPacket(transfer_id)
-    except (ValueError, UnicodeDecodeError) as error:
-        raise ProtocolError("packet contains malformed fields") from error
-    raise ProtocolError("packet type or field count is invalid")
+        fields = raw.decode("ascii").split(",")
+    except UnicodeDecodeError as error:
+        raise ProtocolError("wire packet is not ASCII") from error
+    if len(fields) < 3 or fields[0] != WIRE_PREFIX:
+        raise ProtocolError("wire packet has an unknown prefix")
+    kind = fields[1]
+    transfer_id = _validate_transfer_id(fields[2])
+    if kind == "S" and len(fields) == 5:
+        metadata_chunks = _parse_nonnegative_int(
+            fields[3], "metadata_chunks", maximum=MAX_CHUNK_COUNT
+        )
+        data_chunks = _parse_nonnegative_int(
+            fields[4], "data_chunks", maximum=MAX_CHUNK_COUNT
+        )
+        if metadata_chunks == 0 or data_chunks == 0:
+            raise ProtocolError("START chunk counts must be positive")
+        return StartPacket(transfer_id, metadata_chunks, data_chunks)
+    if kind in {"M", "D"} and len(fields) == 5:
+        index = _parse_nonnegative_int(fields[3], "chunk index")
+        try:
+            data = base64.b64decode(fields[4], validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise ProtocolError("chunk is not valid Base64") from error
+        _validate_chunk(index, data)
+        packet_type = MetaPacket if kind == "M" else DataPacket
+        return packet_type(transfer_id, index, data)
+    if kind == "E" and len(fields) == 3:
+        return EndPacket(transfer_id)
+    if kind == "A" and len(fields) == 4:
+        if fields[3] not in ACK_STAGES:
+            raise ProtocolError("ACK has an unknown stage")
+        return AckPacket(transfer_id, fields[3])
+    if kind == "N" and len(fields) == 4:
+        if not fields[3]:
+            raise ProtocolError("NACK has no missing indices")
+        values = tuple(
+            _parse_nonnegative_int(value, "missing chunk index")
+            for value in fields[3].split(";")
+        )
+        if len(values) != len(set(values)):
+            raise ProtocolError("NACK repeats a missing chunk index")
+        return NackPacket(transfer_id, values)
+    if kind == "C" and len(fields) == 4:
+        if _TOKEN_RE.fullmatch(fields[3]) is None:
+            raise ProtocolError("CANCEL has an invalid reason")
+        return CancelPacket(transfer_id, fields[3])
+    raise ProtocolError("wire packet has an invalid field count or type")
 
 
-def metadata_packets(metadata: ArtifactMetadata, transfer_id: str) -> tuple[StartPacket, tuple[MetadataPacket, ...]]:
+def chunks(payload: bytes, chunk_size: int = DATA_CHUNK_BYTES) -> Iterator[bytes]:
+    if chunk_size <= 0 or chunk_size > DATA_CHUNK_BYTES:
+        raise ProtocolError(f"chunk_size must be between 1 and {DATA_CHUNK_BYTES}")
+    for offset in range(0, len(payload), chunk_size):
+        yield payload[offset : offset + chunk_size]
+
+
+def packetize_metadata(
+    transfer_id: str, metadata: ArtifactMetadata
+) -> tuple[MetaPacket, ...]:
     _validate_transfer_id(transfer_id)
-    payload = metadata.to_bytes()
-    chunks = tuple(
-        MetadataPacket(transfer_id, index, payload[offset : offset + DATA_CHUNK_BYTES])
-        for index, offset in enumerate(range(0, len(payload), DATA_CHUNK_BYTES))
+    return tuple(
+        MetaPacket(transfer_id, index, data)
+        for index, data in enumerate(chunks(metadata.to_bytes()))
     )
-    return StartPacket(transfer_id, len(payload), len(chunks)), chunks
 
 
-def data_packets(path: Path, transfer_id: str) -> Iterator[DataPacket]:
+def packetize_file(
+    path: Path, metadata: ArtifactMetadata, transfer_id: str | None = None
+) -> Iterator[WirePacket]:
+    """Yield a complete START/META/DATA/END transfer while detecting mutation."""
+
+    source = path.expanduser().resolve()
+    if not source.is_file():
+        raise ProtocolError(f"artifact file does not exist: {source}")
+    transfer_id = generate_transfer_id() if transfer_id is None else transfer_id
     _validate_transfer_id(transfer_id)
-    with Path(path).open("rb") as source:
-        index = 0
-        while block := source.read(DATA_CHUNK_BYTES):
-            if index >= MAX_CHUNK_COUNT:
-                raise ProtocolError("artifact exceeds supported chunk count")
-            yield DataPacket(transfer_id, index, block)
-            index += 1
+    stat_before = source.stat()
+    if stat_before.st_size != metadata.file_size:
+        raise ProtocolError("artifact size differs from metadata")
+    metadata_packets = packetize_metadata(transfer_id, metadata)
+    data_chunk_count = (metadata.file_size + DATA_CHUNK_BYTES - 1) // DATA_CHUNK_BYTES
+    yield StartPacket(transfer_id, len(metadata_packets), data_chunk_count)
+    yield from metadata_packets
+
+    digest = hashlib.sha256()
+    bytes_read = 0
+    with source.open("rb") as stream:
+        for index in range(data_chunk_count):
+            data = stream.read(DATA_CHUNK_BYTES)
+            if not data:
+                raise ProtocolError("artifact was truncated during packetization")
+            digest.update(data)
+            bytes_read += len(data)
+            yield DataPacket(transfer_id, index, data)
+        if stream.read(1):
+            raise ProtocolError("artifact grew during packetization")
+    stat_after = source.stat()
+    if bytes_read != metadata.file_size or digest.hexdigest() != metadata.sha256:
+        raise ProtocolError("artifact content differs from metadata")
+    if (stat_before.st_mtime_ns, stat_before.st_size) != (
+        stat_after.st_mtime_ns,
+        stat_after.st_size,
+    ):
+        raise ProtocolError("artifact changed during packetization")
+    yield EndPacket(transfer_id)
 
 
-def packet_lines(packets: Iterable[WirePacket]) -> Iterator[bytes]:
-    for packet in packets:
-        yield encode_packet(packet)
+def nack_packets(transfer_id: str, missing_indices: Iterable[int]) -> tuple[NackPacket, ...]:
+    """Pack an arbitrary missing-index set into valid 111-byte NACK lines."""
+
+    unique = sorted(set(missing_indices))
+    if not unique:
+        return ()
+    result: list[NackPacket] = []
+    current: list[int] = []
+    for index in unique:
+        candidate = NackPacket(transfer_id, tuple((*current, index)))
+        try:
+            encode_packet(candidate)
+        except ProtocolError:
+            if not current:
+                raise
+            result.append(NackPacket(transfer_id, tuple(current)))
+            current = [index]
+        else:
+            current.append(index)
+    if current:
+        result.append(NackPacket(transfer_id, tuple(current)))
+    return tuple(result)
+
+
+assert MAX_WIRE_PAYLOAD_BYTES == 111
+assert len(
+    encode_packet(DataPacket("ffffffff", MAX_CHUNK_COUNT - 1, bytes(DATA_CHUNK_BYTES)))
+) <= MAX_WIRE_PAYLOAD_BYTES
