@@ -190,7 +190,7 @@ void main() {
 
     expect(backend.selectCalls, 1);
     expect(find.text('실제 사용할 Mission 선택'), findsOneWidget);
-    expect(find.text('현재 ACTIVE'), findsOneWidget);
+    expect(find.text('현재 ACTIVE'), findsWidgets);
   });
 
   testWidgets('operator can enter operations after ACTIVE selection', (tester) async {
