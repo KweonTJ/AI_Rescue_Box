@@ -10,6 +10,7 @@ import 'package:rescue_api_client/rescue_api_client.dart';
 import 'jetson_controller.dart';
 
 part 'dashboard.dart';
+part 'mission_landing.dart';
 part 'mission_management.dart';
 part 'mission_map_canvas.dart';
 part 'mission_panel.dart';
@@ -113,7 +114,7 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
         body: IndexedStack(
           index: _selectedPage,
           children: [
-            _MissionManagementHome(controller: widget.controller),
+            _MissionLandingPage(controller: widget.controller),
             _MissionSelector(
               controller: widget.controller,
               onSelect: _activateMission,
