@@ -59,20 +59,49 @@ class _FakeBackend implements JetsonBackend {
       };
 
   @override
-  Future<List<JsonMap>> listMissions() async => [for (final item in missionItems) {...item}];
+  Future<List<JsonMap>> listMissions() async => [
+        for (final item in missionItems) {...item},
+      ];
+
+  @override
+  Future<JsonMap> getMission(String missionId, int missionVersion) async =>
+      _detail(missionId, missionVersion);
 
   @override
   Future<JsonMap?> currentMission() async => current ?? initialCurrent;
 
   @override
+  Future<JsonMap> storeTabletMission(
+    JsonMap draft, {
+    String? filename,
+    Uint8List? bytes,
+    int? reuseFromVersion,
+  }) async {
+    final id = (draft['mission_id'] as String?) ?? 'mission-new';
+    final versions = missionItems
+        .where((item) => item['mission_id'] == id)
+        .map((item) => (item['mission_version'] as num).toInt());
+    final version = versions.isEmpty ? 1 : versions.reduce((a, b) => a > b ? a : b) + 1;
+    missionItems.add(_mission(id, version));
+    return {..._detail(id, version), 'state': 'STORED'};
+  }
+
+  @override
   Future<JsonMap> selectMission(String missionId, int missionVersion) async {
     selectCalls += 1;
     current = _detail(missionId, missionVersion);
+    for (final item in missionItems) {
+      item['active'] =
+          item['mission_id'] == missionId && item['mission_version'] == missionVersion;
+    }
     return current!;
   }
 
   @override
-  Future<JsonMap> analyze() async => {'analysis_mode': 'mock', 'result': <String, Object?>{}};
+  Future<JsonMap> analyze() async => {
+        'analysis_mode': 'mock',
+        'result': <String, Object?>{},
+      };
 
   @override
   Future<JsonMap> currentResult() async => throw StateError('no result');
@@ -109,43 +138,49 @@ Future<void> _pumpApp(WidgetTester tester, _FakeBackend backend) async {
   await tester.pumpAndSettle();
 }
 
+Future<void> _openActive(WidgetTester tester) async {
+  await tester.tap(find.text('ACTIVE').last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
-  testWidgets('cold launch shows Mission Selector even with an active mission', (tester) async {
+  testWidgets('cold launch starts in Mission management even with ACTIVE mission', (tester) async {
     final backend = _FakeBackend(
       missions: [_mission('mission-a', 3, active: true)],
       initialCurrent: _detail('mission-a', 3),
     );
     await _pumpApp(tester, backend);
 
-    expect(find.text('구조도 선택'), findsOneWidget);
-    expect(find.text('현재 사용 중'), findsOneWidget);
-    expect(find.textContaining('현재 Mission ·'), findsNothing);
+    expect(find.text('Mission 관리'), findsWidgets);
+    expect(find.text('새 Mission 만들기'), findsOneWidget);
+    expect(find.text('기존 Mission 수정'), findsOneWidget);
     expect(backend.selectCalls, 0);
   });
 
-  testWidgets('empty state is explicit', (tester) async {
+  testWidgets('ACTIVE empty state is explicit', (tester) async {
     await _pumpApp(tester, _FakeBackend());
-    expect(find.text('Host에서 수신한 구조도가 없습니다.'), findsOneWidget);
+    await _openActive(tester);
+    expect(find.text('실제 사용할 Mission 선택'), findsOneWidget);
+    expect(find.text('저장된 Mission이 없습니다.'), findsOneWidget);
   });
 
-  testWidgets('Jetson disconnected state exposes API address and retry', (tester) async {
+  testWidgets('Jetson disconnected Mission management exposes retry', (tester) async {
     final backend = _FakeBackend(failHealth: true);
     await _pumpApp(tester, backend);
 
-    expect(find.text('Jetson 연결 실패'), findsOneWidget);
-    expect(find.textContaining('192.168.50.1:8080'), findsOneWidget);
-    expect(find.byKey(const Key('mission-selector-retry')), findsOneWidget);
+    expect(find.textContaining('Jetson 연결을 먼저 확인하세요.'), findsOneWidget);
+    expect(find.text('재시도'), findsOneWidget);
 
     backend.failHealth = false;
-    await tester.tap(find.byKey(const Key('mission-selector-retry')));
+    await tester.tap(find.text('재시도'));
     await tester.pumpAndSettle();
     expect(backend.healthCalls, greaterThanOrEqualTo(2));
-    expect(find.text('Host에서 수신한 구조도가 없습니다.'), findsOneWidget);
   });
 
-  testWidgets('mission selection calls API and enters dashboard', (tester) async {
+  testWidgets('ACTIVE selection calls API but remains separate from operations', (tester) async {
     final backend = _FakeBackend(missions: [_mission('mission-a', 3)]);
     await _pumpApp(tester, backend);
+    await _openActive(tester);
 
     expect(find.text('지하주차장 A'), findsOneWidget);
     await tester.tap(find.byKey(const Key('select-mission-a-v3')));
@@ -154,31 +189,23 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(backend.selectCalls, 1);
-    expect(find.textContaining('현재 Mission · mission-a · v3'), findsOneWidget);
-    expect(find.byKey(const Key('choose-another-mission')), findsOneWidget);
+    expect(find.text('실제 사용할 Mission 선택'), findsOneWidget);
+    expect(find.text('현재 ACTIVE'), findsOneWidget);
   });
 
-  testWidgets('operator can return to selector and switch missions', (tester) async {
-    final backend = _FakeBackend(
-      missions: [_mission('mission-a', 1), _mission('mission-b', 2)],
-    );
+  testWidgets('operator can enter operations after ACTIVE selection', (tester) async {
+    final backend = _FakeBackend(missions: [_mission('mission-b', 2)]);
     await _pumpApp(tester, backend);
-
-    await tester.tap(find.byKey(const Key('select-mission-a-v1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('mission-select-confirm')));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('현재 Mission · mission-a · v1'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('choose-another-mission')));
-    await tester.pumpAndSettle();
-    expect(find.text('구조도 선택'), findsOneWidget);
+    await _openActive(tester);
 
     await tester.tap(find.byKey(const Key('select-mission-b-v2')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('mission-select-confirm')));
     await tester.pumpAndSettle();
-    expect(backend.selectCalls, 2);
+
+    await tester.tap(find.text('운영').last);
+    await tester.pumpAndSettle();
     expect(find.textContaining('현재 Mission · mission-b · v2'), findsOneWidget);
+    expect(find.byKey(const Key('choose-another-mission')), findsOneWidget);
   });
 }
