@@ -48,6 +48,16 @@ class _FakeTransport implements RescueTransport {
   }) async => <String, Object?>{};
 
   @override
+  Future<JsonMap> multipart(
+    String path, {
+    required Map<String, String> fields,
+    String fileField = 'base_map',
+    String? filename,
+    Uint8List? bytes,
+    Map<String, Object?> query = const {},
+  }) async => <String, Object?>{};
+
+  @override
   Future<void> close() async {}
 }
 
