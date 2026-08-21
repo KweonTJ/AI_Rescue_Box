@@ -88,6 +88,7 @@ class SerialBridgeClient(BridgeClient):
         self._status_listeners: list[StatusCallback] = []
         self._closed = False
         self._last_retrying = False
+        self._last_serial_status: SerialTransportStatus | None = None
         self._executor = ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="host-serial-uwb"
         )
@@ -187,13 +188,28 @@ class SerialBridgeClient(BridgeClient):
                 LOGGER.exception("Host UWB status listener failed")
 
     def _on_serial_status(self, status: SerialTransportStatus) -> None:
-        if status.connected:
+        with self._lock:
+            previous = self._last_serial_status
+            self._last_serial_status = status
+
+        connected_transition = status.connected and (
+            previous is None
+            or not previous.connected
+            or previous.active_port != status.active_port
+        )
+        error_transition = bool(status.last_error) and (
+            previous is None
+            or previous.last_error != status.last_error
+            or previous.state != status.state
+        )
+
+        if connected_transition:
             LOGGER.info(
                 "Host UWB serial connected port=%s baud=%s",
                 status.active_port,
                 status.baudrate,
             )
-        elif status.last_error:
+        elif error_transition:
             LOGGER.warning(
                 "Host UWB serial %s port=%s error=%s",
                 status.state,
