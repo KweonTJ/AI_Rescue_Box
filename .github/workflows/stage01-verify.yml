@@ -108,7 +108,9 @@ jobs:
       - working-directory: src/d_slam/flutter_app
         run: flutter test
       - name: Build Tablet debug APK
-        run: ./deploy/tablet_android/build_apk.sh --debug
+        run: |
+          ./deploy/tablet_android/build_apk.sh --debug \
+            --api-url http://192.168.0.11:8001
       - name: Validate Tablet release signing configuration
         shell: bash
         run: |
@@ -118,6 +120,15 @@ jobs:
           grep -q 'hasReleaseSigning' src/d_slam/flutter_app/android/app/build.gradle.kts
           ./deploy/tablet_android/build_apk.sh --help >/dev/null
           echo "Signed release APK is not built in CI without a user-provided signing key."
+      - name: Upload Tablet debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-rescue-box-tablet-debug
+          path: |
+            dist/tablet/ai-rescue-box-tablet-debug.apk
+            dist/tablet/ai-rescue-box-tablet-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
 
   firmware-compile:
     runs-on: ubuntu-22.04
