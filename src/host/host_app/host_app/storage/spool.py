@@ -23,6 +23,7 @@ ARTIFACT_KINDS = frozenset(
         "mission_ack",
         "urgent_event",
         "map_delta",
+        "mission_state",
     }
 )
 TRANSFER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
