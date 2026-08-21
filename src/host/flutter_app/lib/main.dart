@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:rescue_api_client/rescue_api_client.dart';
 
-import 'src/host_app.dart';
 import 'src/host_backend_adapter.dart';
+import 'src/host_console_app.dart';
 import 'src/host_controller.dart';
 
 String _defaultApiBaseUrl() {
@@ -20,5 +20,9 @@ void main() {
     defaultBaseUrl: _defaultApiBaseUrl(),
   );
   final transport = HttpRescueTransport(endpoints: endpoints);
-  runApp(RescueHostApp(controller: HostController(HostRestBackend(transport))));
+  runApp(
+    RescueHostConsoleApp(
+      controller: HostController(HostRestBackend(transport)),
+    ),
+  );
 }
