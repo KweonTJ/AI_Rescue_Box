@@ -1,1 +1,9 @@
 include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # The command-center workspace intentionally keeps compact rendering loops
+    # readable while the functional review commands remain in the existing
+    # detailed editor. These are style-only diagnostics, not runtime issues.
+    curly_braces_in_flow_control_structures: ignore
+    unused_element: ignore

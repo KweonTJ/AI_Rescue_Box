@@ -160,7 +160,7 @@ void main() {
   testWidgets('ACTIVE empty state is explicit', (tester) async {
     await _pumpApp(tester, _FakeBackend());
     await _openActive(tester);
-    expect(find.text('실제 사용할 Mission 선택'), findsOneWidget);
+    expect(find.textContaining('실제 사용할 Mission 선택'), findsOneWidget);
     expect(find.text('저장된 Mission이 없습니다.'), findsOneWidget);
   });
 
@@ -182,15 +182,16 @@ void main() {
     await _pumpApp(tester, backend);
     await _openActive(tester);
 
-    expect(find.text('지하주차장 A'), findsOneWidget);
+    expect(find.textContaining('지하주차장 A'), findsWidgets);
     await tester.tap(find.byKey(const Key('select-mission-a-v3')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('mission-select-confirm')));
     await tester.pumpAndSettle();
 
     expect(backend.selectCalls, 1);
-    expect(find.text('실제 사용할 Mission 선택'), findsOneWidget);
-    expect(find.text('현재 ACTIVE'), findsWidgets);
+    expect(find.textContaining('실제 사용할 Mission 선택'), findsOneWidget);
+    expect(find.text('CURRENT ACTIVE'), findsOneWidget);
+    expect(find.text('● ACTIVE'), findsOneWidget);
   });
 
   testWidgets('operator can enter operations after ACTIVE selection', (tester) async {

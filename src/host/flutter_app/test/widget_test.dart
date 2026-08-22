@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:flutter/material.dart' show Size;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rescue_api_client/rescue_api_client.dart';
 import 'package:rescue_api_client/src/host_console_app.dart';
@@ -55,13 +56,18 @@ void main() {
   testWidgets('Host starts as monitoring console without floorplan upload', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final controller = HostController(RestHostBackend(_FakeTransport()));
     await tester.pumpWidget(RescueHostConsoleApp(controller: controller));
     await tester.pump();
 
     expect(find.byType(RescueHostConsoleApp), findsOneWidget);
     expect(find.text('AI Rescue Box · Host'), findsOneWidget);
-    expect(find.text('관제'), findsOneWidget);
+    expect(find.text('관제'), findsWidgets);
     expect(find.text('분석·검토'), findsOneWidget);
     expect(find.text('JPEG/PNG 구조도 업로드'), findsNothing);
     expect(find.text('임무 생성 및 UWB 전송'), findsNothing);

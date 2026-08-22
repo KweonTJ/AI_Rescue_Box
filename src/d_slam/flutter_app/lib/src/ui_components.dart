@@ -92,6 +92,55 @@ class _MiniLabel extends StatelessWidget {
   }
 }
 
+class _VersionStateBadge extends StatelessWidget {
+  const _VersionStateBadge({
+    required this.text,
+    required this.active,
+    required this.verified,
+  });
+
+  final String text;
+  final bool active;
+  final bool verified;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = active
+        ? _tabletGreen
+        : verified
+        ? const Color(0xff7d5700)
+        : _tabletMuted;
+    final background = active
+        ? _tabletGreenSoft
+        : verified
+        ? _tabletYellowSoft
+        : _tabletSurface;
+    final border = active
+        ? const Color(0xffb8ddca)
+        : verified
+        ? const Color(0xffecd797)
+        : _tabletLine;
+    return Container(
+      constraints: const BoxConstraints(minHeight: 28),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: foreground,
+          fontSize: 9,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.15,
+        ),
+      ),
+    );
+  }
+}
+
 class _Legend extends StatelessWidget {
   const _Legend({required this.color, required this.label});
   final Color color;
