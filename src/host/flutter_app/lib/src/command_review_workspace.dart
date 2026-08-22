@@ -93,9 +93,11 @@ class _AnalysisHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     height: 58,
-    color: _crSurface,
     padding: const EdgeInsets.symmetric(horizontal: 15),
-    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _crLine))),
+    decoration: const BoxDecoration(
+      color: _crSurface,
+      border: Border(bottom: BorderSide(color: _crLine)),
+    ),
     child: Row(children: [
       Container(width: 8, height: 8, decoration: BoxDecoration(color: controller.missionId.isEmpty ? const Color(0xffb87a00) : _crGreen, shape: BoxShape.circle)),
       const SizedBox(width: 8),
@@ -354,9 +356,11 @@ class _ApprovalBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     height: 64,
-    color: _crSurface,
     padding: const EdgeInsets.symmetric(horizontal: 15),
-    decoration: const BoxDecoration(border: Border(top: BorderSide(color: _crLine))),
+    decoration: const BoxDecoration(
+      color: _crSurface,
+      border: Border(top: BorderSide(color: _crLine)),
+    ),
     child: Row(children: [
       Expanded(child: Row(children: [
         _PlanStage(label: controller.currentResultVersion > 0 ? 'Result v${controller.currentResultVersion} 검토' : 'Result 대기', done: controller.currentResultVersion > 0),
