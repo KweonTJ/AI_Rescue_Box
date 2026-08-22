@@ -148,17 +148,20 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
                 _TabletPrimaryNav(selectedIndex: _selectedPage, onSelected: (value) => setState(() => _selectedPage = value)),
                 if (widget.controller.busy) const LinearProgressIndicator(minHeight: 2),
                 Expanded(
-                  child: IndexedStack(
-                    index: _selectedPage,
-                    children: [
-                      _MissionLandingPage(controller: widget.controller),
-                      _MissionSelector(controller: widget.controller, onSelect: _activateMission),
-                      _Dashboard(controller: widget.controller, onChooseAnotherMission: _openActivePage),
-                    ],
-                  ),
+                  child: switch (_selectedPage) {
+                    0 => _MissionLandingPage(
+                        controller: widget.controller,
+                      ),
+                    1 => _MissionSelector(
+                        controller: widget.controller,
+                        onSelect: _activateMission,
+                      ),
+                    _ => _Dashboard(
+                        controller: widget.controller,
+                        onChooseAnotherMission: _openActivePage,
+                      ),
+                  },
                 ),
-              ],
-            ),
           ),
         ),
       );
