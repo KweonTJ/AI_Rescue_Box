@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'command_review_workspace.dart';
 import 'host_controller.dart';
-import 'review_workspace.dart';
 
 const _bg = Color(0xffeceff1);
 const _surface = Color(0xffffffff);
@@ -170,7 +170,7 @@ class _HostShellState extends State<_HostShell> {
                     index: _page,
                     children: [
                       _MonitorPage(controller: c, openReview: () => setState(() => _page = 1)),
-                      ReviewWorkspace(controller: c),
+                      CommandReviewWorkspace(controller: c),
                       _EventPage(controller: c),
                     ],
                   ),
@@ -204,14 +204,26 @@ class _Sidebar extends StatelessWidget {
                 children: [
                   _BrandMark(),
                   SizedBox(width: 12),
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('AI Rescue Box · Host', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-                      SizedBox(height: 3),
-                      Text('COMMAND CENTER', style: TextStyle(color: Color(0xff8f989f), fontSize: 9, letterSpacing: 1.1)),
-                    ],
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'AI Rescue Box · Host',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          'COMMAND CENTER',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: Color(0xff8f989f), fontSize: 9, letterSpacing: 1.1),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
