@@ -231,9 +231,11 @@ class _TabletPrimaryNav extends StatelessWidget {
     const items = [('Mission 관리', Icons.folder_copy_outlined), ('ACTIVE', Icons.play_circle_outline), ('운영', Icons.monitor_heart_outlined)];
     return Container(
       height: 62,
-      color: _tabletSurface,
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _tabletLine))),
+      decoration: const BoxDecoration(
+        color: _tabletSurface,
+        border: Border(bottom: BorderSide(color: _tabletLine)),
+      ),
       child: Row(children: [
         for (var index = 0; index < items.length; index++)
           _TabletNavItem(label: items[index].$1, icon: items[index].$2, selected: selectedIndex == index, showActiveDot: index == 1, onTap: () => onSelected(index)),
