@@ -17,6 +17,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ..config import load_config
@@ -98,6 +99,14 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
                 runtime.stop()
 
     app = FastAPI(title="AI Rescue Box Jetson API", version="1.0.0", lifespan=lifespan)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     def call(function, *args, **kwargs):
         try:

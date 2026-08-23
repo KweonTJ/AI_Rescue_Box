@@ -97,8 +97,15 @@ try {
     if (-not (Get-Command flutter -ErrorAction SilentlyContinue)) {
         throw "Flutter stable SDK was not found in PATH."
     }
-    & flutter --version | Select-Object -First 1 | ForEach-Object { Write-Host "Flutter prerequisite: READY ($_)" }
-    if ($LASTEXITCODE -ne 0) { throw "Flutter command exists but could not run successfully." }
+    $FlutterVersionOutput = @(& flutter --version 2>&1)
+    $FlutterExitCode = $LASTEXITCODE
+
+    if ($FlutterExitCode -ne 0) {
+        throw "Flutter command exists but could not run successfully."
+    }
+
+    $FlutterFirstLine = $FlutterVersionOutput | Select-Object -First 1
+    Write-Host "Flutter prerequisite: READY ($FlutterFirstLine)"
 
     $CurrentStage = "Host Python install"
     & (Join-Path $PSScriptRoot "install.ps1") -VenvPath $VenvPath
