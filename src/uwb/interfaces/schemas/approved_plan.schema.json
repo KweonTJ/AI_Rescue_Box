@@ -23,6 +23,8 @@
     "modified_or_cleared_risk_zones": {"type": "array"},
     "final_team_assignments": {"type": "array"},
     "approved_routes": {"type": "array"},
+    "approved_entry_routes": {"type": "array"},
+    "approved_return_routes": {"type": "array"},
     "priorities": {"type": "array"},
     "safe_waiting_points": {"type": "array"},
     "notes": {"type": "string"}
