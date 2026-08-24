@@ -1,9 +1,10 @@
 {
   "hazard_detection": "success",
   "host_flutter_analyze": "failure",
+  "host_flutter_log": "Resolving dependencies...\nDownloading packages...\n+ async 2.13.1\n+ boolean_selector 2.1.2\n+ characters 1.4.1\n+ clock 1.1.2\n+ collection 1.19.1\n+ cross_file 0.3.5+4\n+ crypto 3.0.7\n+ fake_async 1.3.3\n+ ffi 2.2.0\n+ file_picker 8.3.7 (12.0.0 available)\n+ flutter 0.0.0 from sdk flutter\n+ flutter_lints 5.0.0 (6.0.0 available)\n+ flutter_plugin_android_lifecycle 2.0.35\n+ flutter_test 0.0.0 from sdk flutter\n+ flutter_web_plugins 0.0.0 from sdk flutter\n+ http 1.6.0\n+ http_parser 4.1.2\n+ leak_tracker 11.0.2\n+ leak_tracker_flutter_testing 3.0.10\n+ leak_tracker_testing 3.0.2\n+ lints 5.1.1 (6.1.0 available)\n+ matcher 0.12.20\n+ material_color_utilities 0.13.0 (0.13.1 available)\n+ meta 1.19.0\n+ path 1.9.1\n+ plugin_platform_interface 2.1.8\n+ sky_engine 0.0.0 from sdk flutter\n+ source_span 1.10.2\n+ stack_trace 1.12.1\n+ stream_channel 2.1.4\n+ string_scanner 1.4.1\n+ term_glyph 1.2.2\n+ test_api 0.7.12 (0.7.13 available)\n+ typed_data 1.4.0\n+ vector_math 2.4.2\n+ vm_service 15.3.0\n+ web 1.1.1\n+ web_socket 1.0.1\n+ web_socket_channel 3.0.3\n+ win32 5.15.0 (6.4.0 available)\nChanged 40 dependencies!\n6 packages have newer versions incompatible with dependency constraints.\nTry `flutter pub outdated` for more information.\nAnalyzing flutter_app...                                        \n\n  error • The named parameter 'minHeight' isn't defined. Try correcting the name to an existing named parameter's name, or defining a named parameter with the name 'minHeight' • lib/src/command_review_workspace.dart:54:13 • undefined_named_parameter\n  error • The named parameter 'minHeight' isn't defined. Try correcting the name to an existing named parameter's name, or defining a named parameter with the name 'minHeight' • lib/src/command_review_workspace.dart:140:13 • undefined_named_parameter\n\n2 issues found. (ran in 7.0s)\n",
   "mission_sync": "success",
   "python_compile": "success",
   "return_route": "success",
   "tablet_flutter_analyze": "success",
-  "tested_commit": "2b968a1279b5dd9f6f5607c35f5e436e9aec9874"
+  "tested_commit": "68f7211f04a120292b3111a9b5a52146f28c4231"
 }
