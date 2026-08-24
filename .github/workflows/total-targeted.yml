@@ -68,6 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       analyze: ${{ steps.results.outputs.analyze }}
+      log_b64: ${{ steps.results.outputs.log_b64 }}
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -79,12 +80,15 @@ jobs:
         continue-on-error: true
         working-directory: src/host/flutter_app
         run: |
-          flutter pub get
-          flutter analyze
+          set -o pipefail
+          { flutter pub get && flutter analyze; } 2>&1 | tee "$RUNNER_TEMP/host-analyze.log"
       - name: Export Host Flutter outcome
         id: results
         if: always()
-        run: echo "analyze=${{ steps.analyze.outcome }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "analyze=${{ steps.analyze.outcome }}" >> "$GITHUB_OUTPUT"
+          log_b64="$(tail -n 80 "$RUNNER_TEMP/host-analyze.log" 2>/dev/null | base64 -w0 || true)"
+          echo "log_b64=$log_b64" >> "$GITHUB_OUTPUT"
 
   tablet-flutter-analyze:
     runs-on: ubuntu-latest
@@ -119,6 +123,7 @@ jobs:
       RETURN_ROUTE: ${{ needs.python-targeted.outputs.return_route }}
       HAZARD: ${{ needs.python-targeted.outputs.hazard }}
       HOST_FLUTTER: ${{ needs.host-flutter-analyze.outputs.analyze }}
+      HOST_LOG_B64: ${{ needs.host-flutter-analyze.outputs.log_b64 }}
       TABLET_FLUTTER: ${{ needs.tablet-flutter-analyze.outputs.analyze }}
     steps:
       - uses: actions/checkout@v4
@@ -128,7 +133,12 @@ jobs:
         run: |
           mkdir -p ci
           python - <<'PY'
-          import json, os
+          import base64, json, os
+          raw = os.environ.get("HOST_LOG_B64", "")
+          try:
+              host_log = base64.b64decode(raw).decode("utf-8", errors="replace") if raw else ""
+          except Exception:
+              host_log = ""
           result = {
               "tested_commit": os.environ.get("TESTED_COMMIT", ""),
               "python_compile": os.environ.get("PYTHON_COMPILE", "unknown") or "unknown",
@@ -137,6 +147,7 @@ jobs:
               "hazard_detection": os.environ.get("HAZARD", "unknown") or "unknown",
               "host_flutter_analyze": os.environ.get("HOST_FLUTTER", "unknown") or "unknown",
               "tablet_flutter_analyze": os.environ.get("TABLET_FLUTTER", "unknown") or "unknown",
+              "host_flutter_log": host_log,
           }
           with open("ci/total-targeted-result.json", "w", encoding="utf-8") as stream:
               json.dump(result, stream, ensure_ascii=False, indent=2, sort_keys=True)
