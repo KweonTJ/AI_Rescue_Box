@@ -51,7 +51,7 @@ class _CommandReviewWorkspaceState extends State<CommandReviewWorkspace> {
       child: Column(
         children: [
           Container(
-            minHeight: 58,
+            constraints: const BoxConstraints(minHeight: 58),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: const BoxDecoration(
               color: _surface,
@@ -137,7 +137,7 @@ class _CommandReviewWorkspaceState extends State<CommandReviewWorkspace> {
             ),
           ),
           Container(
-            minHeight: 62,
+            constraints: const BoxConstraints(minHeight: 62),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: const BoxDecoration(
               color: _surface,
@@ -280,8 +280,10 @@ class _Painter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final semantic = controller.reviewedSemantic;
-    final width = (controller.imageWidth <= 1 ? 1000 : controller.imageWidth).toDouble();
-    final height = (controller.imageHeight <= 1 ? 700 : controller.imageHeight).toDouble();
+    final width =
+        (controller.imageWidth <= 1 ? 1000 : controller.imageWidth).toDouble();
+    final height =
+        (controller.imageHeight <= 1 ? 700 : controller.imageHeight).toDouble();
 
     Offset screen(Object? value) {
       final point = controller.semanticPoint(value);
@@ -460,7 +462,10 @@ class _RouteGroup extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           if (routes.isEmpty)
-            const Text('경로 없음', style: TextStyle(color: _muted, fontSize: 9)),
+            const Text(
+              '경로 없음',
+              style: TextStyle(color: _muted, fontSize: 9),
+            ),
           for (final route in routes)
             _RouteCard(route: route, color: color, controller: controller),
         ],
@@ -484,7 +489,7 @@ class _RouteCard extends StatelessWidget {
       margin: const EdgeInsets.only(top: 7),
       padding: const EdgeInsets.all(9),
       decoration: BoxDecoration(
-        border: Border.all(color: _line),
+        border: Border.all(color: color.withValues(alpha: .35)),
         borderRadius: BorderRadius.circular(7),
       ),
       child: Column(
