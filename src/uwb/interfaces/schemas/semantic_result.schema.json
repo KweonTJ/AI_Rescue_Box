@@ -27,7 +27,8 @@
     "blocked_passages": {"type": "array"},
     "change_regions": {"type": "array"},
     "traversability": {"type": "object"},
-    "entry_routes": {"type": "array", "items": {"type": "object"}},
+    "entry_routes": {"type": "array", "items": {"$ref": "#/$defs/route"}},
+    "return_routes": {"type": "array", "items": {"$ref": "#/$defs/route"}},
     "team_recommendations": {"type": "array", "items": {"type": "object"}},
     "safe_waiting_points": {"type": "array"},
     "explored_areas": {"type": "array"},
@@ -36,6 +37,23 @@
     "map_alignment": {"type": "object"}
   },
   "$defs": {
-    "pose": {"type": "object", "required": ["x", "y"], "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "yaw": {"type": "number"}}}
+    "pose": {"type": "object", "required": ["x", "y"], "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "yaw": {"type": "number"}}},
+    "route": {
+      "type": "object",
+      "required": ["route_id", "start", "goal", "points"],
+      "properties": {
+        "route_id": {"type": "string"},
+        "target_id": {"type": ["string", "null"]},
+        "start": {"$ref": "#/$defs/pose"},
+        "goal": {"$ref": "#/$defs/pose"},
+        "goal_type": {"type": "string"},
+        "points": {"type": "array", "items": {"$ref": "#/$defs/pose"}},
+        "total_distance": {"type": "number", "minimum": 0},
+        "risk_cost": {"type": "number", "minimum": 0},
+        "minimum_clearance": {"type": "number", "minimum": 0},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "rank": {"type": "integer", "minimum": 1}
+      }
+    }
   }
 }
