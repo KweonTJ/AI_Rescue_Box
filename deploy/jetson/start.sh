@@ -44,15 +44,19 @@ echo "$$" > "$RUNTIME_DIR/stack.pid"
 trap 'rm -f "$RUNTIME_DIR/stack.pid"' EXIT
 
 if [[ -n "${ROS_DISTRO:-}" && -f "/opt/ros/$ROS_DISTRO/setup.bash" ]]; then
+  set +u
   # shellcheck disable=SC1090
   source "/opt/ros/$ROS_DISTRO/setup.bash"
+  set -u
 elif [[ -z "${ROS_DISTRO:-}" ]]; then
   echo "ROS_DISTRO is unset. Source ROS2 before start.sh." >&2
   exit 2
 fi
 if [[ -f "$COLCON_ROOT/install/setup.bash" ]]; then
+  set +u
   # shellcheck disable=SC1090
   source "$COLCON_ROOT/install/setup.bash"
+  set -u
 else
   echo "Combined ROS workspace is not built. Run deploy/jetson/install.sh." >&2
   exit 2
