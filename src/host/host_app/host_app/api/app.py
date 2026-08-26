@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,7 +24,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from ..errors import StaleVersionError, ValidationError
-from .schemas import MissionCreateRequest, PlanBuildRequest, ReviewCommandRequest
+from .schemas import (
+    JetsonMissionSyncRequest,
+    MissionCreateRequest,
+    PlanBuildRequest,
+    ReviewCommandRequest,
+)
 from .service import HostApiService, ResourceNotFoundError
 
 
@@ -210,6 +217,34 @@ def create_app(
     async def create_mission(body: MissionCreateRequest) -> dict:
         return await asyncio.to_thread(
             current_service().create_mission, body.model_dump()
+        )
+
+    @app.post(
+        f"{API_PREFIX}/jetson/missions/sync",
+        tags=["missions"],
+        summary="Store and activate the Mission selected on Jetson",
+    )
+    async def sync_jetson_mission(body: JetsonMissionSyncRequest) -> dict:
+        service_value = current_service()
+        encoded_limit = (
+            (service_value.normalization_options.max_input_bytes + 2) // 3
+        ) * 4
+        if len(body.base_map_base64) > encoded_limit:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="base map exceeds the configured size limit",
+            )
+        try:
+            base_map = base64.b64decode(body.base_map_base64, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="base_map_base64 is invalid",
+            ) from error
+        return await asyncio.to_thread(
+            service_value.sync_jetson_mission,
+            body.manifest,
+            base_map,
         )
 
     @app.get(f"{API_PREFIX}/missions", tags=["missions"])

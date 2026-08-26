@@ -153,7 +153,10 @@ class PersonFusionEngine:
                 camera_position=camera_point,
                 map_position=map_point,
                 detected_at=detection.timestamp,
-                source="rgb_person_detector+measured_depth",
+                source=(
+                    f"{getattr(self.detector, 'source_name', 'rgb_person_detector')}"
+                    "+measured_depth"
+                ),
             )
             self.tracker.add(candidate)
         return self.tracker.candidates()

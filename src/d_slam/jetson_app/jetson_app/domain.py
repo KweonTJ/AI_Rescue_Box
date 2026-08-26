@@ -496,8 +496,6 @@ class MissionManifest:
 
         available_teams = _nonnegative_int(data.get("available_teams", data.get("team_count", 0)), "available_teams")
         available_rescuers = _nonnegative_int(data.get("available_rescuers", data.get("rescue_personnel_count", 0)), "available_rescuers")
-        if available_teams == 0 and available_rescuers == 0:
-            raise ValidationError("available teams or rescuers must be greater than zero")
 
         frame = data.get("coordinate_frame") or data.get("coordinate_system") or transform.get("frame_id") or "mission_map"
         if frame != "mission_map":

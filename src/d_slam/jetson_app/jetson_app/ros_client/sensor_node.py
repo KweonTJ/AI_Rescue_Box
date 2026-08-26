@@ -7,10 +7,12 @@ owned by ``src/uwb`` and can be attached through an application port.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import struct
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -39,6 +41,7 @@ try:
     )
     from rclpy.time import Time
     from sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+    from std_msgs.msg import String
     from tf2_ros import Buffer, TransformListener
 except ImportError:
     rclpy = None
@@ -47,6 +50,7 @@ except ImportError:
     PoseWithCovarianceStamped = RosOccupancyGrid = CameraInfo = CompressedImage = Image = PointCloud2 = None
     Buffer = TransformListener = None
     Time = None
+    String = None
     qos_profile_sensor_data = None
     DurabilityPolicy = QoSProfile = ReliabilityPolicy = None
 
@@ -273,13 +277,26 @@ class SensorRosNode(Node):
             max_workers=1, thread_name_prefix="jetson-person-inference"
         )
         self._inference_pending = threading.Event()
+        self._person_inference_interval_s = max(
+            0.0,
+            float(os.environ.get("AI_RESCUE_PERSON_INFERENCE_INTERVAL_S", "1.0")),
+        )
+        self._last_person_inference_monotonic = float("-inf")
         qos_state = 10
         qos_sensor = qos_profile_sensor_data
+
+        # RTAB-Map occupancy grid is a latched TRANSIENT_LOCAL topic.
+        # Match its QoS so a restarted Jetson API immediately receives
+        # the latest map instead of waiting for a future publication.
+        qos_map = QoSProfile(depth=1)
+        qos_map.reliability = ReliabilityPolicy.RELIABLE
+        qos_map.durability = DurabilityPolicy.TRANSIENT_LOCAL
+
         self.create_subscription(
             RosOccupancyGrid,
             config.topics.occupancy_grid,
             self._on_occupancy,
-            qos_state,
+            qos_map,
         )
         self.create_subscription(
             PoseWithCovarianceStamped,
@@ -288,6 +305,25 @@ class SensorRosNode(Node):
             qos_state,
         )
         self.create_subscription(Image, config.topics.rgb, self._on_rgb, qos_sensor)
+
+        self._external_person_topic = os.environ.get(
+            "AI_RESCUE_EXTERNAL_PERSON_TOPIC", ""
+        ).strip()
+
+        self._external_person_subscription = None
+
+        if self._external_person_topic and String is not None:
+            self._external_person_subscription = self.create_subscription(
+                String,
+                self._external_person_topic,
+                self._on_external_person_detections,
+                qos_state,
+            )
+
+            self.get_logger().warning(
+                "external person detector enabled: "
+                + self._external_person_topic
+            )
         self.create_subscription(Image, config.topics.depth, self._on_depth, qos_sensor)
         self.create_subscription(
             CameraInfo, config.topics.camera_info, self._on_camera_info, qos_sensor
@@ -399,6 +435,29 @@ class SensorRosNode(Node):
         message.pose.covariance[35] = math.radians(15.0) ** 2
         self._initial_pose_publisher.publish(message)
 
+    def _on_external_person_detections(self, message: Any) -> None:
+        fusion = self.fusion
+
+        if fusion is None:
+            return
+
+        updater = getattr(
+            fusion.detector,
+            "update_json",
+            None,
+        )
+
+        if not callable(updater):
+            return
+
+        try:
+            updater(str(message.data))
+
+        except Exception as error:
+            self.get_logger().warning(
+                f"discarding external person detections: {error}"
+            )
+
     def _on_camera_info(self, message: Any) -> None:
         k = message.k
         try:
@@ -464,6 +523,13 @@ class SensorRosNode(Node):
         self._last_rgb = message
         if self.fusion is None or self._inference_pending.is_set():
             return
+        now = time.monotonic()
+        if (
+            now - self._last_person_inference_monotonic
+            < self._person_inference_interval_s
+        ):
+            return
+        self._last_person_inference_monotonic = now
         self._inference_pending.set()
         with self._state_lock:
             mission_epoch = self._mission_epoch
@@ -486,6 +552,54 @@ class SensorRosNode(Node):
                         if self.fusion is not None:
                             self.fusion.reset()
                         return
+                    log_counts = getattr(
+                        self,
+                        "_candidate_log_counts",
+                        {},
+                    )
+
+                    for candidate in candidates:
+                        previous = log_counts.get(
+                            candidate.detection_id,
+                            0,
+                        )
+
+                        if candidate.observation_count <= previous:
+                            continue
+
+                        log_counts[candidate.detection_id] = (
+                            candidate.observation_count
+                        )
+
+                        camera = candidate.camera_position
+                        mapped = candidate.map_position
+
+                        camera_text = (
+                            f"({camera.x:.2f},"
+                            f"{camera.y:.2f},"
+                            f"{camera.z:.2f})"
+                            if camera is not None
+                            else "None"
+                        )
+
+                        map_text = (
+                            f"({mapped.x:.2f},"
+                            f"{mapped.y:.2f})"
+                            if mapped is not None
+                            else "None"
+                        )
+
+                        self.get_logger().info(
+                            "person candidate "
+                            f"source={candidate.source} "
+                            f"confidence={candidate.confidence:.3f} "
+                            f"observations={candidate.observation_count} "
+                            f"camera_xyz={camera_text} "
+                            f"slam_map_xy={map_text}"
+                        )
+
+                    self._candidate_log_counts = log_counts
+
                     if self.candidate_callback is not None:
                         self.candidate_callback(candidates)
             except Exception as error:

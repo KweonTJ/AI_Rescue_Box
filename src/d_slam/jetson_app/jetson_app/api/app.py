@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from ..config import load_config
 from ..map_preview import OccupancyPreviewRenderer
 from ..mission import MissionManager
-from ..mission.state_sync import MissionStatePublisher
+from ..mission.host_sync import HostMissionSync
 from ..mission.tablet_ingest import TabletMissionIngestor
 from ..rescue_map import SemanticRescueMapRenderer
 from ..runtime import Stage3Runtime
@@ -80,7 +80,7 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
         )
 
     tablet_ingestor = TabletMissionIngestor(service.manager)
-    mission_state_publisher = MissionStatePublisher(service.manager, service.transport)
+    host_mission_sync = HostMissionSync(service.manager, service.events)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -212,22 +212,9 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
     @app.post("/api/v1/missions/{mission_id}/{mission_version}/select")
     def select_mission(mission_id: str, mission_version: int):
         selected = call(service.select_mission, mission_id, mission_version)
-        try:
-            sync = dict(mission_state_publisher.publish_active(mission_id, mission_version))
-            event_name = "mission.state_sync_queued" if sync.get("success") else "mission.state_sync_local_only"
-            service.events.publish(event_name, sync)
-        except Exception as error:
-            sync = {"success": False, "state": "sync_failed", "error": str(error)}
-            service.events.publish(
-                "mission.state_sync_failed",
-                {
-                    "mission_id": mission_id,
-                    "mission_version": mission_version,
-                    "error": str(error),
-                },
-            )
-        # Local ACTIVE selection must remain usable even when UWB/Host is down.
-        return {**selected, "mission_state_sync": sync}
+        # Host sync is deliberately detached from the Tablet ACTIVE response.
+        sync = dict(host_mission_sync.queue_active(mission_id, mission_version))
+        return {**selected, "host_sync": sync}
 
     def processed_or_original(mission_id: str, mission_version: int) -> bytes:
         call(service.mission_detail, mission_id, mission_version)
@@ -272,6 +259,103 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
 
     @app.post("/api/v1/analysis")
     def analyze(): return call(service.analyze)
+
+    @app.get("/api/v1/person-candidates/current")
+    def person_candidates():
+        if runtime is None:
+            raise HTTPException(503, "person runtime is unavailable")
+
+        try:
+            mission = service._mission()
+            sensor_node = runtime.sensor_node
+
+            if sensor_node is None:
+                raise RuntimeError(
+                    "sensor node is unavailable"
+                )
+
+            # Person 좌표 변환에는 전체 OccupancyGrid snapshot이
+            # 필요하지 않다. 기존 AnalysisPipeline과 동일하게
+            # API runtime에서 처음 관측된 SLAM pose를 anchor로 사용한다.
+            with sensor_node._state_lock:
+                trajectory = tuple(
+                    sensor_node._trajectory
+                )
+                latest_pose = (
+                    sensor_node._latest_pose
+                )
+
+            if trajectory:
+                slam_start_pose = trajectory[0]
+            elif latest_pose is not None:
+                slam_start_pose = latest_pose
+            else:
+                raise RuntimeError(
+                    "waiting for SLAM pose"
+                )
+
+            transform = runtime.transform.resolve(
+                mission.manifest,
+                slam_start_pose,
+            )
+
+            values = []
+
+            for candidate in runtime.candidate_source():
+                item = candidate.to_dict()
+
+                slam_position = (
+                    candidate.map_position.to_dict()
+                    if candidate.map_position is not None
+                    else None
+                )
+
+                mission_position = None
+
+                if candidate.map_position is not None:
+                    mission_position = transform.slam_to_mission_point(
+                        candidate.map_position
+                    ).to_dict()
+
+                item["slam_map_position"] = slam_position
+                item["mission_map_position"] = mission_position
+
+                # semantic_result에 바로 넣을 수 있도록 mission_map으로 통일
+                item["map_position"] = mission_position
+                item["position"] = mission_position
+                item["coordinate_frame"] = "mission_map"
+
+                item["confirmed"] = bool(
+                    candidate.depth_valid
+                    and mission_position is not None
+                    and candidate.observation_count
+                        >= runtime.config.confirmation_observations
+                )
+
+                values.append(item)
+
+            values.sort(
+                key=lambda item: (
+                    str(item.get("last_seen_at", "")),
+                    int(item.get("observation_count", 0)),
+                    float(item.get("confidence", 0.0)),
+                ),
+                reverse=True,
+            )
+
+            return {
+                "mission_id": mission.manifest.mission_id,
+                "mission_version": mission.manifest.mission_version,
+                "coordinate_frame": "mission_map",
+                "candidates": values,
+                "transform": transform.metadata(),
+            }
+
+        except Exception as error:
+            raise HTTPException(
+                503,
+                f"could not expose person candidates: {error}",
+            ) from error
 
     @app.get("/api/v1/results/current")
     def result(): return call(service.current_result)

@@ -355,6 +355,41 @@ class HostApiService:
         self.events.publish("mission.activated", value)
         return value
 
+    def sync_jetson_mission(
+        self, manifest_value: Mapping[str, Any], base_map: bytes
+    ) -> dict[str, Any]:
+        manifest = MissionManifest.from_dict(manifest_value)
+        base_map_size = len(base_map) if isinstance(base_map, bytes) else 0
+        if not 0 < base_map_size <= self.normalization_options.max_input_bytes:
+            raise ValidationError("base map size is outside the configured limit")
+        suffix = Path(manifest.base_map.filename).suffix.lower()
+        temporary = (
+            self._uploads_root / f"mission-sync-{uuid.uuid4().hex}{suffix}"
+        )
+        try:
+            atomic_write_bytes(temporary, base_map)
+            with self._storage_lock:
+                existed = self.store.mission_dir(
+                    manifest.mission_id, manifest.mission_version
+                ).exists()
+                self.store.save_mission(manifest, temporary)
+            with self._lock:
+                self._active_mission = (
+                    manifest.mission_id,
+                    manifest.mission_version,
+                )
+        finally:
+            temporary.unlink(missing_ok=True)
+        value = {
+            "mission_id": manifest.mission_id,
+            "mission_version": manifest.mission_version,
+            "state": "ACTIVE",
+            "duplicate": existed,
+        }
+        self.events.publish("mission.http_synced", value)
+        self.events.publish("mission.activated", value)
+        return value
+
     def list_missions(self) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
         if not self.store.root.exists():

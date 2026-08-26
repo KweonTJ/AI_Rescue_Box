@@ -6,3 +6,11 @@ analyzer:
     # same part file while the new bounded landing page is exercised by CI.
     # They are not runtime entry points and can be removed in a later cleanup.
     unused_element: ignore
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**

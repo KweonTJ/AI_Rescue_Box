@@ -35,7 +35,7 @@ stage4:
   alignment_min_coverage: 0.20
   alignment_min_known_cells: 25
   alignment_min_occupied_cells: 8
-  alignment_max_samples: 2500
+  alignment_max_samples: 400
   robot_clearance_m: 0.25
   prior_reference_wall_block: true
   narrow_passage_cost_value: 45
