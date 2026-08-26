@@ -15,7 +15,7 @@ final class JetsonController extends ChangeNotifier {
     this.backend, {
     this.apiBaseUri,
     ArtifactLoader? artifactLoader,
-    this.autoRefreshInterval = const Duration(seconds: 3),
+    this.autoRefreshInterval = const Duration(seconds: 1),
   }) : _artifactLoader = artifactLoader ?? _loaderFor(backend) {
     _eventSubscription = backend.events.listen(
       _onEvent,
@@ -55,6 +55,8 @@ final class JetsonController extends ChangeNotifier {
   JsonMap? approvedPlan;
   Uint8List? baseMapPng;
   Uint8List? previewPng;
+  String? _baseMapCacheMissionId;
+  int? _baseMapCacheMissionVersion;
   bool analysisWasMock = false;
   bool webSocketConnected = false;
   double transferProgress = 0;
@@ -244,7 +246,7 @@ final class JetsonController extends ChangeNotifier {
       backendStatus = unwrapEnvelope(await backend.status());
       missions = await backend.listMissions();
       await _loadServerCurrentMission();
-      await _refreshSelectedArtifacts();
+      await _refreshSelectedArtifacts(includePreview: false);
       _notify();
     } on Object catch (caught) {
       _recordEvent('주기 갱신 실패: ${_errorText(caught)}');
@@ -252,15 +254,15 @@ final class JetsonController extends ChangeNotifier {
     }
   }
 
-  Future<void> _refreshSelectedArtifacts() async {
+  Future<void> _refreshSelectedArtifacts({bool includePreview = true}) async {
     if (selectedMissionId == null) return;
     await _loadCurrentResult();
     final plan = await _optionalObject(
       backend.currentApprovedPlan,
       key: 'plan',
     );
-    if (plan != null) approvedPlan = plan;
-    await _loadCurrentPreview();
+    approvedPlan = plan;
+    if (includePreview) await _loadCurrentPreview();
   }
 
   Future<void> _loadCurrentResult() async {
@@ -282,10 +284,19 @@ final class JetsonController extends ChangeNotifier {
   }
 
   Future<void> _loadBaseMapPng() async {
+    final missionId = selectedMissionId;
+    final missionVersion = selectedMissionVersion;
+    if (missionId == null || missionVersion == null) return;
+    if (_baseMapCacheMissionId == missionId &&
+        _baseMapCacheMissionVersion == missionVersion) {
+      return;
+    }
     final base = _mapAt(selectedMission, 'base_map');
     final path = _stringAt(base, const ['download_url']);
     if (path == null || _artifactLoader == null) return;
     baseMapPng = await _loadPng(path, 'base map');
+    _baseMapCacheMissionId = missionId;
+    _baseMapCacheMissionVersion = missionVersion;
   }
 
   Future<void> _loadPreviewPng() async {
@@ -328,7 +339,7 @@ final class JetsonController extends ChangeNotifier {
                     missionVersion,
           },
       ];
-      await _loadBaseMapPng();
+      if (identityChanged) await _loadBaseMapPng();
       return;
     }
     _clearMissionArtifacts(clearSelection: true);
@@ -346,6 +357,8 @@ final class JetsonController extends ChangeNotifier {
     previewSendReceipt = null;
     approvedPlan = null;
     baseMapPng = null;
+    _baseMapCacheMissionId = null;
+    _baseMapCacheMissionVersion = null;
     previewPng = null;
     analysisWasMock = false;
     transferProgress = 0;

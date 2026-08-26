@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,7 +24,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from ..errors import StaleVersionError, ValidationError
-from .schemas import MissionCreateRequest, PlanBuildRequest, ReviewCommandRequest
+from .schemas import (
+    JetsonMissionSyncRequest,
+    MissionCreateRequest,
+    PlanBuildRequest,
+    ReviewCommandRequest,
+)
 from .service import HostApiService, ResourceNotFoundError
 
 
@@ -33,7 +40,7 @@ PositiveVersion = Annotated[int, ApiPath(ge=1)]
 def _configured_origins(value: list[str] | tuple[str, ...] | None) -> list[str]:
     if value is not None:
         return [item.strip() for item in value if item.strip()]
-    raw = os.environ.get("AI_RESCUE_API_CORS_ORIGINS", "")
+    raw = os.environ.get("AI_RESCUE_API_CORS_ORIGINS", "*")
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
@@ -211,6 +218,53 @@ def create_app(
         return await asyncio.to_thread(
             current_service().create_mission, body.model_dump()
         )
+
+    @app.post(
+        f"{API_PREFIX}/jetson/missions/sync",
+        tags=["missions"],
+        summary="Store and activate the Mission selected on Jetson",
+    )
+    async def sync_jetson_mission(body: JetsonMissionSyncRequest) -> dict:
+        service_value = current_service()
+        maximum = service_value.normalization_options.max_input_bytes
+        if len(body.base_map) > ((maximum + 2) // 3) * 4 + 4:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Jetson base map exceeds the configured size limit",
+            )
+        try:
+            base_map = base64.b64decode(body.base_map, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="base_map must be valid base64",
+            ) from error
+        if not 0 < len(base_map) <= maximum:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Jetson base map size is outside the configured limit",
+            )
+        return await asyncio.to_thread(
+            service_value.sync_jetson_mission,
+            body.manifest,
+            base_map,
+        )
+
+    @app.get(
+        f"{API_PREFIX}/final-map/current",
+        tags=["results"],
+        summary="Return the active Host-approved final map state for the tablet",
+    )
+    async def current_final_map() -> dict:
+        return await asyncio.to_thread(current_service().current_final_map_state)
+
+    @app.post(
+        f"{API_PREFIX}/final-map/publish",
+        tags=["results"],
+        summary="Publish the loaded Host-reviewed final map for the tablet",
+    )
+    async def publish_final_map() -> dict:
+        return await asyncio.to_thread(current_service().publish_final_map)
 
     @app.get(f"{API_PREFIX}/missions", tags=["missions"])
     async def list_missions() -> dict:

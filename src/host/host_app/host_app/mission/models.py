@@ -235,8 +235,6 @@ class MissionManifest:
         object.__setattr__(self, "entrances", entrances)
         teams = nonnegative_int(self.available_teams, "available_teams")
         rescuers = nonnegative_int(self.available_rescuers, "available_rescuers")
-        if teams == 0 and rescuers == 0:
-            raise ValidationError("available teams or rescuers must be greater than zero")
         object.__setattr__(self, "available_teams", teams)
         object.__setattr__(self, "available_rescuers", rescuers)
         if self.coordinate_frame != "mission_map":

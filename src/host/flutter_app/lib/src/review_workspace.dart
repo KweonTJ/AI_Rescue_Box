@@ -64,12 +64,12 @@ final class ReviewWorkspace extends StatelessWidget {
                 ),
               ),
             FilledButton.icon(
-              key: const Key('send-approved-plan'),
+              key: const Key('publish-final-map'),
               onPressed: controller.currentResult == null || controller.busy
                   ? null
-                  : controller.buildAndSendApprovedPlan,
+                  : controller.publishFinalMap,
               icon: const Icon(Icons.verified_outlined),
-              label: const Text('최종 계획 승인 및 UWB 재전송'),
+              label: const Text('최종 지도 전송'),
             ),
           ],
         ),

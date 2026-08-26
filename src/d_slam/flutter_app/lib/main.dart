@@ -6,7 +6,7 @@ import 'src/jetson_controller.dart';
 
 const _jetsonApiBaseUrl = String.fromEnvironment(
   'JETSON_API_BASE_URL',
-  defaultValue: 'http://192.168.50.1:8001',
+  defaultValue: 'http://192.168.0.11:8001',
 );
 const _jetsonWebSocketUrl = String.fromEnvironment('JETSON_WS_URL');
 

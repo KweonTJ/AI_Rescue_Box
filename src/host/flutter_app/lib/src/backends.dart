@@ -21,6 +21,7 @@ abstract interface class HostBackend {
   Future<JsonMap> listApprovedPlans(String missionId, int missionVersion, int resultVersion);
   Future<JsonMap> currentApprovedPlan(String missionId, int missionVersion, int resultVersion);
   Future<JsonMap> sendApprovedPlan(String missionId, int missionVersion, int resultVersion, int planVersion);
+  Future<JsonMap> publishFinalMap();
   Future<void> close();
 }
 
@@ -49,6 +50,7 @@ final class RestHostBackend implements HostBackend {
   @override Future<JsonMap> listApprovedPlans(String missionId, int missionVersion, int resultVersion) => _getObject(_planRoot(missionId, missionVersion, resultVersion));
   @override Future<JsonMap> currentApprovedPlan(String missionId, int missionVersion, int resultVersion) => _getObject('${_planRoot(missionId, missionVersion, resultVersion)}/current');
   @override Future<JsonMap> sendApprovedPlan(String missionId, int missionVersion, int resultVersion, int planVersion) => _postObject('${_planRoot(missionId, missionVersion, resultVersion)}/$planVersion/send');
+  @override Future<JsonMap> publishFinalMap() => _postObject('api/v1/final-map/publish');
   @override Future<void> close() => transport.close();
 }
 

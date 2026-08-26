@@ -132,6 +132,9 @@ final class HostRestBackend implements HostBackend, HostAssetBackend {
   );
 
   @override
+  Future<JsonMap> publishFinalMap() => _delegate.publishFinalMap();
+
+  @override
   Future<JsonMap> reconnect() async => requireJsonMap(
     await transport.post('api/v1/status/reconnect'),
     context: 'reconnect response',

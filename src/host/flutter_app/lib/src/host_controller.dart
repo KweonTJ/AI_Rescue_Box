@@ -48,6 +48,7 @@ final class HostController extends ChangeNotifier {
 
   static const semanticLayers = <String>[
     'slam_preview',
+    'robot_pose',
     'robot_trajectory',
     'victim_candidates',
     'confirmed_victims',
@@ -56,6 +57,7 @@ final class HostController extends ChangeNotifier {
     'explored_areas',
     'unknown_areas',
     'entry_routes',
+    'return_routes',
     'team_recommendations',
     'safe_waiting_points',
   ];
@@ -355,6 +357,39 @@ final class HostController extends ChangeNotifier {
     });
   }
 
+  /// Hydrates an already-ACTIVE mission for monitoring without activating or
+  /// sending it again.
+  Future<void> hydrateActiveMission(JsonMap manifest) async {
+    final id = _stringValue(manifest, const ['mission_id']);
+    final version = _intValue(manifest, const ['mission_version', 'version']);
+    if (id == null || version == null || version < 1) {
+      throw const FormatException('active mission manifest lacks id/version');
+    }
+
+    final missionChanged = missionId != id || missionVersion != version;
+    currentMission = manifest;
+    _applyManifest(manifest);
+    existingMissionSelected = true;
+    if (missionChanged) {
+      currentResult = null;
+      originalSemantic = null;
+      currentResultVersion = 0;
+      approvedPlans = const [];
+      latestApprovedPlanVersion = 0;
+      approvedPlan = null;
+      previewBytes = null;
+      previewMetadata = null;
+      previewVersion = 0;
+    }
+
+    final assets = _assets;
+    mapBytes = null;
+    _notify();
+    if (assets == null) return;
+    mapBytes = await assets.missionBaseMap(id, version);
+    _notify();
+  }
+
   void prepareNextVersion() {
     if (missionId.isEmpty) return;
     var latest = missionVersion;
@@ -530,7 +565,7 @@ final class HostController extends ChangeNotifier {
     ),
   });
 
-  Future<void> buildAndSendApprovedPlan() async {
+  Future<void> publishFinalMap() async {
     final result = currentResult;
     if (result == null) return;
     final resultVersion =
@@ -538,49 +573,13 @@ final class HostController extends ChangeNotifier {
         currentResultVersion;
     if (resultVersion <= 0) throw StateError('result version is unavailable');
     await _run(() async {
-      var plan = approvedPlan;
-      final planResultVersion = _intValue(plan ?? const {}, const [
-        'base_result_version',
-        'semantic_result_version',
-        'based_on_result_version',
-      ]);
-      if (planResultVersion != null && planResultVersion != resultVersion) {
-        plan = null;
+      final published = await backend.publishFinalMap();
+      final planValue = published['approved_plan'];
+      if (planValue is! Map) {
+        throw const FormatException('publish response lacks approved_plan');
       }
-      if (plan == null) {
-        final nextPlanVersion = latestApprovedPlanVersion + 1;
-        plan = await backend.buildApprovedPlan(
-          missionId,
-          missionVersion,
-          resultVersion,
-          nextPlanVersion,
-          expectedRevision: reviewRevision,
-        );
-        approvedPlan = plan;
-        final builtVersion =
-            _intValue(plan, const [
-              'approved_plan_version',
-              'plan_version',
-              'artifact_version',
-            ]) ??
-            nextPlanVersion;
-        latestApprovedPlanVersion = math.max(
-          latestApprovedPlanVersion,
-          builtVersion,
-        );
-        approvedPlans = [
-          ...approvedPlans.where(
-            (item) =>
-                _intValue(item, const [
-                  'approved_plan_version',
-                  'plan_version',
-                  'artifact_version',
-                ]) !=
-                builtVersion,
-          ),
-          plan,
-        ];
-      }
+      final plan = requireJsonMap(planValue);
+      approvedPlan = plan;
       final actualVersion =
           _intValue(plan, const [
             'approved_plan_version',
@@ -588,15 +587,23 @@ final class HostController extends ChangeNotifier {
             'version',
           ]) ??
           latestApprovedPlanVersion;
-      _resetTransferState();
-      final operation = await backend.sendApprovedPlan(
-        missionId,
-        missionVersion,
-        resultVersion,
+      latestApprovedPlanVersion = math.max(
+        latestApprovedPlanVersion,
         actualVersion,
       );
-      await _waitForOperation(operation);
-      eventLog.insert(0, '최종 계획 전송 완료: v$actualVersion');
+      approvedPlans = [
+        ...approvedPlans.where(
+          (item) =>
+              _intValue(item, const [
+                'approved_plan_version',
+                'plan_version',
+                'artifact_version',
+              ]) !=
+              actualVersion,
+        ),
+        plan,
+      ];
+      eventLog.insert(0, '최종 지도 publish 완료: v$actualVersion');
     });
   }
 
@@ -613,6 +620,8 @@ final class HostController extends ChangeNotifier {
       'position',
       'map_point',
       'center',
+      'current_position',
+      'recommended_position',
     ]) {
       final nested = point[key];
       if (nested is Map) {
@@ -646,6 +655,172 @@ final class HostController extends ChangeNotifier {
       oy.toDouble() + dy / scale.toDouble(),
     );
   }
+
+  MapPoint missionPointFromImage(MapPoint imagePoint) {
+    final transformValue = currentMission?['coordinate_transform'];
+    if (transformValue is! Map) return imagePoint;
+    final transform = requireJsonMap(transformValue);
+    final originValue = transform['image_origin'];
+    if (originValue is! Map) return imagePoint;
+    final origin = requireJsonMap(originValue);
+    final ox = origin['x'];
+    final oy = origin['y'];
+    final scale = transform['meters_per_pixel'];
+    final rotation = transform['rotation_radians'] ?? 0;
+    if (ox is! num || oy is! num || scale is! num || rotation is! num) {
+      return imagePoint;
+    }
+    final scaledX = (imagePoint.x - ox.toDouble()) * scale.toDouble();
+    var scaledY = (imagePoint.y - oy.toDouble()) * scale.toDouble();
+    if (transform['invert_y'] != false) scaledY = -scaledY;
+    final cosine = math.cos(rotation.toDouble());
+    final sine = math.sin(rotation.toDouble());
+    return MapPoint(
+      cosine * scaledX - sine * scaledY,
+      sine * scaledX + cosine * scaledY,
+    );
+  }
+
+  String _nextHostId(String prefix, Iterable<String> existing) {
+    final used = existing.toSet();
+    var index = 1;
+    while (used.contains('$prefix-$index')) {
+      index += 1;
+    }
+    return '$prefix-$index';
+  }
+
+  Future<String?> addVictimAtImage(MapPoint imagePoint) async {
+    if (currentResult == null) return null;
+    final semantic = reviewedSemantic;
+    final ids = <String>[];
+    for (final layer in const ['victim_candidates', 'confirmed_victims']) {
+      final values = semantic[layer];
+      if (values is! List) continue;
+      for (final raw in values.whereType<Map>()) {
+        final item = requireJsonMap(raw);
+        final id = item['victim_id'] ?? item['detection_id'] ?? item['id'];
+        if (id != null) ids.add(id.toString());
+      }
+    }
+    final id = _nextHostId('host-victim', ids);
+    final point = missionPointFromImage(imagePoint);
+    await applyReview({
+      'action': 'add_victim',
+      'victim_id': id,
+      'x': point.x,
+      'y': point.y,
+    });
+    return id;
+  }
+
+  Future<void> moveVictimToImage(String victimId, MapPoint imagePoint) async {
+    final point = missionPointFromImage(imagePoint);
+    await applyReview({
+      'action': 'set_victim_position',
+      'victim_id': victimId,
+      'x': point.x,
+      'y': point.y,
+    });
+  }
+
+  Future<void> deleteVictim(String victimId, {required bool hostAdded}) async {
+    if (hostAdded) {
+      await applyReview({
+        'action': 'remove_added_victim',
+        'victim_id': victimId,
+      });
+      return;
+    }
+    await applyReview({
+      'action': 'set_victim_status',
+      'victim_id': victimId,
+      'status': 'excluded',
+    });
+  }
+
+  Future<String?> addTeamAtImage(MapPoint imagePoint) async {
+    if (currentResult == null) return null;
+    final values = reviewedSemantic['team_recommendations'];
+    final ids = <String>[];
+    if (values is List) {
+      for (final raw in values.whereType<Map>()) {
+        final item = requireJsonMap(raw);
+        final id = item['team_id'] ?? item['id'];
+        if (id != null) ids.add(id.toString());
+      }
+    }
+    final id = _nextHostId('host-team', ids);
+    final point = missionPointFromImage(imagePoint);
+    await applyReview({
+      'action': 'upsert_team_assignment',
+      'assignment': {
+        'team_id': id,
+        'label': '구조인력',
+        'position': {'x': point.x, 'y': point.y},
+        'victim_id': null,
+        'route_id': null,
+        'source': 'host_user',
+      },
+    });
+    return id;
+  }
+
+  Future<void> moveTeamToImage(JsonMap item, MapPoint imagePoint) async {
+    final id = item['team_id'] ?? item['id'];
+    if (id == null) return;
+    final point = missionPointFromImage(imagePoint);
+    final assignment = <String, dynamic>{...item};
+    assignment['team_id'] = id.toString();
+    assignment['position'] = {'x': point.x, 'y': point.y};
+    await applyReview({
+      'action': 'upsert_team_assignment',
+      'assignment': assignment,
+    });
+  }
+
+  Future<void> removeTeam(String teamId) =>
+      applyReview({'action': 'remove_team_assignment', 'team_id': teamId});
+
+  Future<String?> addSafePointAtImage(MapPoint imagePoint) async {
+    if (currentResult == null) return null;
+    final values = reviewedSemantic['safe_waiting_points'];
+    final ids = <String>[];
+    if (values is List) {
+      for (final raw in values.whereType<Map>()) {
+        final item = requireJsonMap(raw);
+        final id = item['waiting_id'] ?? item['safe_waiting_id'] ?? item['id'];
+        if (id != null) ids.add(id.toString());
+      }
+    }
+    final id = _nextHostId('host-safe', ids);
+    final point = missionPointFromImage(imagePoint);
+    await applyReview({
+      'action': 'add_safe_waiting_point',
+      'waiting_id': id,
+      'x': point.x,
+      'y': point.y,
+    });
+    return id;
+  }
+
+  Future<void> moveSafePointToImage(
+    String waitingId,
+    MapPoint imagePoint,
+  ) async {
+    final point = missionPointFromImage(imagePoint);
+    await applyReview({
+      'action': 'update_safe_waiting_point',
+      'waiting_id': waitingId,
+      'x': point.x,
+      'y': point.y,
+    });
+  }
+
+  Future<void> removeSafePoint(String waitingId) => applyReview({
+    'action': 'remove_safe_waiting_point',
+    'waiting_id': waitingId,
+  });
 
   List<MapPoint>? get previewCorners {
     final metadata = previewMetadata;

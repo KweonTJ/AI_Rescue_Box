@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 APP="$ROOT/src/d_slam/flutter_app"
 MODE=debug
-API_URL="${JETSON_API_BASE_URL:-http://192.168.50.1:8001}"
+API_URL="${JETSON_API_BASE_URL:-http://192.168.0.11:8001}"
+HOST_URL="${HOST_API_BASE_URL:-http://192.168.0.10:8000}"
 WS_URL="${JETSON_WS_URL:-}"
 OUTPUT_DIR="${AI_RESCUE_APK_OUTPUT_DIR:-$ROOT/dist/tablet}"
 GENERATED_PATHS=()
@@ -100,10 +101,11 @@ while (( $# )); do
     --debug) MODE=debug; shift ;;
     --release) MODE=release; shift ;;
     --api-url) API_URL="${2:?--api-url requires a value}"; shift 2 ;;
+    --host-url) HOST_URL="${2:?--host-url requires a value}"; shift 2 ;;
     --ws-url) WS_URL="${2:?--ws-url requires a value}"; shift 2 ;;
     --output-dir) OUTPUT_DIR="${2:?--output-dir requires a value}"; shift 2 ;;
     -h|--help)
-      echo "usage: $0 [--debug|--release] [--api-url URL] [--ws-url URL] [--output-dir DIR]"
+      echo "usage: $0 [--debug|--release] [--api-url URL] [--host-url URL] [--ws-url URL] [--output-dir DIR]"
       exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -111,6 +113,7 @@ done
 
 command -v flutter >/dev/null 2>&1 || { echo "Flutter SDK is required to build the APK." >&2; exit 1; }
 [[ "$API_URL" == http://* || "$API_URL" == https://* ]] || { echo "Jetson API URL must start with http:// or https://" >&2; exit 2; }
+[[ "$HOST_URL" == http://* || "$HOST_URL" == https://* ]] || { echo "Host API URL must start with http:// or https://" >&2; exit 2; }
 
 if [[ "$MODE" == release ]]; then
   PROPERTIES="$APP/android/key.properties"
@@ -134,7 +137,7 @@ bootstrap_android_scaffold
 
 cd "$APP"
 flutter pub get
-args=(build apk "--$MODE" "--dart-define=JETSON_API_BASE_URL=$API_URL")
+args=(build apk "--$MODE" "--dart-define=JETSON_API_BASE_URL=$API_URL" "--dart-define=HOST_API_BASE_URL=$HOST_URL")
 if [[ -n "$WS_URL" ]]; then args+=("--dart-define=JETSON_WS_URL=$WS_URL"); fi
 flutter "${args[@]}"
 
@@ -146,4 +149,5 @@ cp "$source_apk" "$destination"
 sha256sum "$destination" > "$destination.sha256"
 echo "Tablet APK ready: $destination"
 echo "Jetson API: $API_URL"
+echo "Host API: $HOST_URL"
 echo "This build result does not verify installation, network, or Jetson hardware."

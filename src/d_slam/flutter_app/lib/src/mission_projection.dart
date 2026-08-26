@@ -6,54 +6,71 @@ class _MissionProjection {
     required this.imageHeight,
     required this.scale,
     required this.rotation,
-    required this.origin,
+    required this.imageOrigin,
+    required this.mapOrigin,
+    required this.invertY,
   });
 
   final double imageWidth;
   final double imageHeight;
   final double scale;
   final double rotation;
-  final Offset origin;
+  final Offset imageOrigin;
+  final Offset mapOrigin;
+  final bool invertY;
 
   factory _MissionProjection.fromManifest(JsonMap? manifest) {
     final baseMap = _asMap(manifest?['base_map']);
     final transform = _asMap(manifest?['coordinate_transform']);
+    final imageHeight =
+        (baseMap?['height'] as num?)?.toDouble() ??
+        (manifest?['base_map_height'] as num?)?.toDouble() ??
+        1;
     final topScale = (manifest?['meters_per_pixel'] as num?)?.toDouble();
     final transformScale = (transform?['meters_per_pixel'] as num?)?.toDouble();
+    final imageOrigin = _asMap(transform?['image_origin']);
     final offset = _asMap(transform?['origin_offset_m']);
     return _MissionProjection(
-      imageWidth: (baseMap?['width'] as num?)?.toDouble() ??
+      imageWidth:
+          (baseMap?['width'] as num?)?.toDouble() ??
           (manifest?['base_map_width'] as num?)?.toDouble() ??
           1,
-      imageHeight: (baseMap?['height'] as num?)?.toDouble() ??
-          (manifest?['base_map_height'] as num?)?.toDouble() ??
-          1,
+      imageHeight: imageHeight,
       scale: topScale ?? transformScale ?? 1,
       rotation: (transform?['rotation_radians'] as num?)?.toDouble() ?? 0,
-      origin: Offset(
+      imageOrigin: Offset(
+        (imageOrigin?['x'] as num?)?.toDouble() ?? 0,
+        (imageOrigin?['y'] as num?)?.toDouble() ?? imageHeight,
+      ),
+      mapOrigin: Offset(
         (offset?['x'] as num?)?.toDouble() ?? 0,
         (offset?['y'] as num?)?.toDouble() ?? 0,
       ),
+      invertY: transform?['invert_y'] != false,
     );
   }
 
   Offset imageToMission(Offset imagePoint) {
-    final x = imagePoint.dx * scale;
-    final y = (imageHeight - imagePoint.dy) * scale;
+    final x = (imagePoint.dx - imageOrigin.dx) * scale;
+    final imageY = (imagePoint.dy - imageOrigin.dy) * scale;
+    final y = invertY ? -imageY : imageY;
     final cosTheta = math.cos(rotation);
     final sinTheta = math.sin(rotation);
     return Offset(
-      origin.dx + x * cosTheta - y * sinTheta,
-      origin.dy + x * sinTheta + y * cosTheta,
+      mapOrigin.dx + x * cosTheta - y * sinTheta,
+      mapOrigin.dy + x * sinTheta + y * cosTheta,
     );
   }
 
   Offset missionToImage(Offset missionPoint) {
-    final translated = missionPoint - origin;
+    final translated = missionPoint - mapOrigin;
     final cosTheta = math.cos(-rotation);
     final sinTheta = math.sin(-rotation);
     final x = translated.dx * cosTheta - translated.dy * sinTheta;
     final y = translated.dx * sinTheta + translated.dy * cosTheta;
-    return Offset(x / scale, imageHeight - y / scale);
+    return Offset(
+      imageOrigin.dx + x / scale,
+      imageOrigin.dy + (invertY ? -y : y) / scale,
+    );
   }
 }

@@ -53,7 +53,9 @@ class _MissionManagementHome extends StatelessWidget {
                             ),
                           ),
                           FilledButton.icon(
-                            onPressed: controller.busy ? null : controller.initialise,
+                            onPressed: controller.busy
+                                ? null
+                                : controller.initialise,
                             icon: const Icon(Icons.refresh),
                             label: const Text('재시도'),
                           ),
@@ -191,10 +193,7 @@ class _MissionActionCard extends StatelessWidget {
           const SizedBox(height: 22),
           SizedBox(
             width: double.infinity,
-            child: FilledButton(
-              onPressed: onPressed,
-              child: Text(buttonLabel),
-            ),
+            child: FilledButton(onPressed: onPressed, child: Text(buttonLabel)),
           ),
         ],
       ),
@@ -225,11 +224,13 @@ class _MissionLibraryPageState extends State<_MissionLibraryPage> {
   Widget build(BuildContext context) {
     final missions = [...widget.controller.missions]
       ..sort((a, b) {
-        final idCompare = (_asString(a['mission_id']) ?? '')
-            .compareTo(_asString(b['mission_id']) ?? '');
+        final idCompare = (_asString(a['mission_id']) ?? '').compareTo(
+          _asString(b['mission_id']) ?? '',
+        );
         if (idCompare != 0) return idCompare;
-        return (_asInt(b['mission_version'] ?? b['version']) ?? 0)
-            .compareTo(_asInt(a['mission_version'] ?? a['version']) ?? 0);
+        return (_asInt(b['mission_version'] ?? b['version']) ?? 0).compareTo(
+          _asInt(a['mission_version'] ?? a['version']) ?? 0,
+        );
       });
     return Scaffold(
       appBar: AppBar(title: const Text('기존 Mission 수정')),
@@ -248,7 +249,10 @@ class _MissionLibraryPageState extends State<_MissionLibraryPage> {
                   final mission = missions[index];
                   final id = _asString(mission['mission_id']) ?? 'unknown';
                   final version =
-                      _asInt(mission['mission_version'] ?? mission['version']) ?? 0;
+                      _asInt(
+                        mission['mission_version'] ?? mission['version'],
+                      ) ??
+                      0;
                   final active = mission['active'] == true;
                   return Card(
                     child: ListTile(
@@ -308,8 +312,6 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
   final _missionNameController = TextEditingController(text: '현장 임무');
   final _metersPerPixelController = TextEditingController();
   final _scaleDistanceController = TextEditingController(text: '1.0');
-  final _teamsController = TextEditingController(text: '1');
-  final _rescuersController = TextEditingController(text: '2');
   final _notesController = TextEditingController();
 
   Uint8List? _mapBytes;
@@ -345,8 +347,6 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
       _missionNameController,
       _metersPerPixelController,
       _scaleDistanceController,
-      _teamsController,
-      _rescuersController,
       _notesController,
     ]) {
       controller.dispose();
@@ -370,7 +370,8 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
       final robot = _asMap(manifest['robot_start']) ?? const {};
       final robotImage =
           _asMap(transform['robot_start_image']) ??
-          (_asDouble(robot['image_x']) != null && _asDouble(robot['image_y']) != null
+          (_asDouble(robot['image_x']) != null &&
+                  _asDouble(robot['image_y']) != null
               ? {'x': robot['image_x'], 'y': robot['image_y']}
               : _asMap(transform['image_origin']));
       final rx = _asDouble(robotImage?['x']);
@@ -378,12 +379,14 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
       final scale = _asDouble(
         manifest['meters_per_pixel'] ?? transform['meters_per_pixel'],
       );
-      final imageYaw = _asDouble(transform['initial_image_yaw']) ??
+      final imageYaw =
+          _asDouble(transform['initial_image_yaw']) ??
           _asDouble(transform['rotation_radians']) ??
           0.0;
       final mapInfo = _asMap(manifest['base_map']) ?? const {};
       final width = _asInt(manifest['base_map_width'] ?? mapInfo['width']) ?? 1;
-      final height = _asInt(manifest['base_map_height'] ?? mapInfo['height']) ?? 1;
+      final height =
+          _asInt(manifest['base_map_height'] ?? mapInfo['height']) ?? 1;
       final entrances = _asObjectList(manifest['entrances']);
       final imageEntrances = <Offset>[];
       for (final entrance in entrances) {
@@ -411,13 +414,8 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
       if (!mounted) return;
       setState(() {
         _missionIdController.text = id;
-        _missionNameController.text =
-            _asString(manifest['mission_name']) ?? id;
+        _missionNameController.text = _asString(manifest['mission_name']) ?? id;
         _metersPerPixelController.text = scale?.toStringAsPrecision(8) ?? '';
-        _teamsController.text =
-            (_asInt(manifest['available_teams']) ?? 0).toString();
-        _rescuersController.text =
-            (_asInt(manifest['available_rescuers']) ?? 0).toString();
         _notesController.text = _asString(manifest['notes']) ?? '';
         _mapBytes = bytes;
         _mapFilename =
@@ -451,7 +449,12 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
     final oy = _asDouble(origin?['y']);
     final scale = _asDouble(transform['meters_per_pixel']);
     final rotation = _asDouble(transform['rotation_radians']) ?? 0.0;
-    if (mapX == null || mapY == null || ox == null || oy == null || scale == null || scale <= 0) {
+    if (mapX == null ||
+        mapY == null ||
+        ox == null ||
+        oy == null ||
+        scale == null ||
+        scale <= 0) {
       return null;
     }
     final cosine = math.cos(rotation);
@@ -516,9 +519,9 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
   }
 
   Offset _imagePoint(Offset local, Size size) => Offset(
-        (local.dx / size.width * _imageWidth).clamp(0, _imageWidth.toDouble()),
-        (local.dy / size.height * _imageHeight).clamp(0, _imageHeight.toDouble()),
-      );
+    (local.dx / size.width * _imageWidth).clamp(0, _imageWidth.toDouble()),
+    (local.dy / size.height * _imageHeight).clamp(0, _imageHeight.toDouble()),
+  );
 
   void _mapTap(Offset value) {
     setState(() {
@@ -564,12 +567,6 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
       setState(() => _error = 'Mission 이름을 입력하세요.');
       return;
     }
-    final teams = int.tryParse(_teamsController.text.trim()) ?? 0;
-    final rescuers = int.tryParse(_rescuersController.text.trim()) ?? 0;
-    if (teams < 0 || rescuers < 0 || (teams == 0 && rescuers == 0)) {
-      setState(() => _error = '구조팀 또는 구조인원을 한 명 이상 입력하세요.');
-      return;
-    }
 
     final draft = <String, Object?>{
       if (_missionIdController.text.trim().isNotEmpty)
@@ -579,11 +576,8 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
       'robot_start_image': {'x': start.dx, 'y': start.dy},
       'initial_yaw': _robotYaw,
       'entrances': [
-        for (final entrance in _entrances)
-          {'x': entrance.dx, 'y': entrance.dy},
+        for (final entrance in _entrances) {'x': entrance.dx, 'y': entrance.dy},
       ],
-      'available_teams': teams,
-      'available_rescuers': rescuers,
       'notes': _notesController.text,
     };
 
@@ -596,21 +590,24 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
         draft,
         filename: _imageChanged || !widget.editing ? _mapFilename : null,
         bytes: _imageChanged || !widget.editing ? map : null,
-        reuseFromVersion:
-            widget.editing && !_imageChanged ? _sourceVersion : null,
+        reuseFromVersion: widget.editing && !_imageChanged
+            ? _sourceVersion
+            : null,
       );
       await widget.controller.refresh();
       if (!mounted) return;
-      final id = _asString(stored['mission_id']) ??
+      final id =
+          _asString(stored['mission_id']) ??
           _asString(_asMap(stored['manifest'])?['mission_id']) ??
           _missionIdController.text;
-      final version = _asInt(stored['mission_version']) ??
+      final version =
+          _asInt(stored['mission_version']) ??
           _asInt(_asMap(stored['manifest'])?['mission_version']) ??
           _nextVersion ??
           1;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$id · v$version 저장 완료 (STORED)')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$id · v$version 저장 완료 (STORED)')));
       Navigator.of(context).pop();
     } on Object catch (error) {
       if (mounted) setState(() => _error = _message(error));
@@ -649,7 +646,9 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
                         padding: const EdgeInsets.all(14),
                         child: Text(
                           _error!,
-                          style: TextStyle(color: Theme.of(context).colorScheme.error),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
                         ),
                       ),
                     ),
@@ -673,27 +672,9 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
                         const SizedBox(height: 12),
                         TextField(
                           controller: _missionNameController,
-                          decoration: const InputDecoration(labelText: 'Mission 이름'),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _teamsController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(labelText: '구조팀 수'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: TextField(
-                                controller: _rescuersController,
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(labelText: '구조인원 수'),
-                              ),
-                            ),
-                          ],
+                          decoration: const InputDecoration(
+                            labelText: 'Mission 이름',
+                          ),
                         ),
                         const SizedBox(height: 12),
                         TextField(
@@ -779,14 +760,16 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
                           runSpacing: 8,
                           children: [
                             ChoiceChip(
-                              selected: _editMode == _MissionEditMode.robotStart,
+                              selected:
+                                  _editMode == _MissionEditMode.robotStart,
                               label: const Text('로봇 시작 위치/방향'),
                               onSelected: (_) => setState(
                                 () => _editMode = _MissionEditMode.robotStart,
                               ),
                             ),
                             ChoiceChip(
-                              selected: _editMode == _MissionEditMode.scaleFirst ||
+                              selected:
+                                  _editMode == _MissionEditMode.scaleFirst ||
                                   _editMode == _MissionEditMode.scaleSecond,
                               label: const Text('축척 두 점 지정'),
                               onSelected: (_) => setState(() {
@@ -817,7 +800,10 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
                             Expanded(
                               child: TextField(
                                 controller: _scaleDistanceController,
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                      decimal: true,
+                                    ),
                                 decoration: const InputDecoration(
                                   labelText: '두 점의 실제 거리 (m)',
                                 ),
@@ -825,7 +811,8 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
                             ),
                             const SizedBox(width: 10),
                             FilledButton.tonal(
-                              onPressed: _scaleFirst != null && _scaleSecond != null
+                              onPressed:
+                                  _scaleFirst != null && _scaleSecond != null
                                   ? _calculateScale
                                   : null,
                               child: const Text('축척 계산'),
@@ -835,7 +822,9 @@ class _MissionEditorPageState extends State<_MissionEditorPage> {
                         const SizedBox(height: 12),
                         TextField(
                           controller: _metersPerPixelController,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                           decoration: const InputDecoration(
                             labelText: '축척 (m/pixel)',
                             helperText: '직접 입력하거나 위 두 점으로 계산할 수 있습니다.',
@@ -937,9 +926,9 @@ class _MissionImageEditor extends StatelessWidget {
   final VoidCallback onRobotDragEnd;
 
   Offset _point(Offset local, Size size) => Offset(
-        (local.dx / size.width * imageWidth).clamp(0, imageWidth.toDouble()),
-        (local.dy / size.height * imageHeight).clamp(0, imageHeight.toDouble()),
-      );
+    (local.dx / size.width * imageWidth).clamp(0, imageWidth.toDouble()),
+    (local.dy / size.height * imageHeight).clamp(0, imageHeight.toDouble()),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -956,16 +945,17 @@ class _MissionImageEditor extends StatelessWidget {
               builder: (context, constraints) {
                 final size = constraints.biggest;
                 return GestureDetector(
-                  onTapDown: (details) => onTap(_point(details.localPosition, size)),
+                  onTapDown: (details) =>
+                      onTap(_point(details.localPosition, size)),
                   onPanStart: editMode == _MissionEditMode.robotStart
                       ? (details) => onRobotDragStart(
-                            _point(details.localPosition, size),
-                          )
+                          _point(details.localPosition, size),
+                        )
                       : null,
                   onPanUpdate: editMode == _MissionEditMode.robotStart
                       ? (details) => onRobotDragUpdate(
-                            _point(details.localPosition, size),
-                          )
+                          _point(details.localPosition, size),
+                        )
                       : null,
                   onPanEnd: editMode == _MissionEditMode.robotStart
                       ? (_) => onRobotDragEnd()
@@ -1016,9 +1006,9 @@ class _MissionDraftPainter extends CustomPainter {
   final List<Offset> entrances;
 
   Offset _screen(Offset value, Size size) => Offset(
-        value.dx / imageWidth * size.width,
-        value.dy / imageHeight * size.height,
-      );
+    value.dx / imageWidth * size.width,
+    value.dy / imageHeight * size.height,
+  );
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1055,11 +1045,7 @@ class _MissionDraftPainter extends CustomPainter {
     final entrancePaint = Paint()..color = const Color(0xff118ab2);
     for (final entrance in entrances) {
       canvas.drawRect(
-        Rect.fromCenter(
-          center: _screen(entrance, size),
-          width: 14,
-          height: 14,
-        ),
+        Rect.fromCenter(center: _screen(entrance, size), width: 14, height: 14),
         entrancePaint,
       );
     }
@@ -1072,7 +1058,7 @@ class _MissionDraftPainter extends CustomPainter {
 String _message(Object error) {
   if (error is ApiFailure) return error.message;
   return error.toString().replaceFirst(
-        RegExp(r'^[A-Za-z]+(?:Error|Exception): '),
-        '',
-      );
+    RegExp(r'^[A-Za-z]+(?:Error|Exception): '),
+    '',
+  );
 }

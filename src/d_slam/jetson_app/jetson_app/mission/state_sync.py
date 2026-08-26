@@ -1,82 +1,68 @@
-"""Publish tiny ACTIVE Mission snapshots from Jetson to the command-center Host."""
+"""Synchronize Jetson's ACTIVE Mission to the Host over local Wi-Fi HTTP."""
 from __future__ import annotations
 
+import base64
 import json
-import threading
-from pathlib import Path
+import os
 from typing import Any, Mapping
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
-from ..domain import utc_now
-from ..storage import atomic_write_json
 from .manager import MissionManager
 
 
 class MissionStatePublisher:
-    """Maintain a monotonic Mission-state version independent of Mission vN.
+    """Send the canonical manifest and base map without using the UWB link."""
 
-    A Mission version can be re-activated after a newer version, so UWB's
-    ``artifact_version`` cannot safely reuse ``mission_version``.  The sequence
-    below is persisted on Jetson and monotonically increases for every ACTIVE
-    selection.
-    """
-
-    def __init__(self, manager: MissionManager, transport: Any | None) -> None:
+    def __init__(
+        self,
+        manager: MissionManager,
+        host_base_url: str | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> None:
         self.manager = manager
-        self.transport = transport
-        self._lock = threading.RLock()
-        self._root = manager.root.parent / "mission_state"
-        self._sequence_path = self._root / "sequence.json"
-        self._outgoing = self._root / "outgoing"
-
-    def _next_sequence(self) -> int:
-        with self._lock:
-            previous = 0
-            if self._sequence_path.is_file() and not self._sequence_path.is_symlink():
-                try:
-                    value = json.loads(self._sequence_path.read_text(encoding="utf-8"))
-                    if isinstance(value, Mapping):
-                        candidate = value.get("last_artifact_version", 0)
-                        if isinstance(candidate, int) and not isinstance(candidate, bool):
-                            previous = max(0, candidate)
-                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                    previous = 0
-            current = previous + 1
-            atomic_write_json(
-                self._sequence_path,
-                {"last_artifact_version": current, "updated_at": utc_now()},
-            )
-            return current
+        configured_url = host_base_url or os.environ.get(
+            "AI_RESCUE_HOST_API_URL", "http://192.168.0.10:8000"
+        )
+        self.endpoint = configured_url.rstrip("/") + "/api/v1/jetson/missions/sync"
+        self.timeout_seconds = timeout_seconds or float(
+            os.environ.get("AI_RESCUE_HOST_SYNC_TIMEOUT_SECONDS", "5")
+        )
+        if self.timeout_seconds <= 0:
+            raise ValueError("Host Mission sync timeout must be positive")
 
     def publish_active(self, mission_id: str, mission_version: int) -> Mapping[str, Any]:
         applied = self.manager.load_mission(mission_id, mission_version)
-        artifact_version = self._next_sequence()
-        state = {
-            "schema_version": "1.0",
-            "artifact_type": "mission_state",
-            "artifact_version": artifact_version,
-            "mission_id": applied.manifest.mission_id,
-            "mission_version": applied.manifest.mission_version,
-            "state": "ACTIVE",
-            "updated_at": utc_now(),
-            # The image never crosses UWB.  The canonical manifest is small and
-            # lets Host preserve existing result/review/approved-plan storage.
+        payload = {
             "manifest": applied.manifest.to_dict(),
+            "base_map": base64.b64encode(applied.base_map_path.read_bytes()).decode(
+                "ascii"
+            ),
         }
-        path = self._outgoing / f"mission_state_v{artifact_version}.json"
-        atomic_write_json(path, state)
-
-        sender = getattr(self.transport, "send_mission_state", None)
-        if not callable(sender):
-            return {
-                "success": False,
-                "state": "local_only",
-                "artifact_version": artifact_version,
-                "error": "UWB mission-state transport is unavailable",
-            }
-        result = dict(sender(state, path, priority=180))
+        request = urllib_request.Request(
+            self.endpoint,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=self.timeout_seconds) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib_error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Host Mission sync failed with HTTP {error.code}: {detail}"
+            ) from error
+        except (urllib_error.URLError, TimeoutError, OSError) as error:
+            raise RuntimeError(f"Host Mission sync failed: {error}") from error
+        if not isinstance(result, Mapping) or result.get("state") != "ACTIVE":
+            raise RuntimeError("Host Mission sync returned an invalid response")
         return {
-            **result,
-            "artifact_version": artifact_version,
+            **dict(result),
+            "success": True,
+            "transport": "http",
+            "endpoint": self.endpoint,
             "mission_id": mission_id,
             "mission_version": mission_version,
         }

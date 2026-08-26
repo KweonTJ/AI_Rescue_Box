@@ -123,14 +123,10 @@ class _HostShellState extends State<_HostShell> {
       if (id == null || id.isEmpty || version == null || version < 1) return;
       if (widget.controller.missionId != id ||
           widget.controller.missionVersion != version ||
-          widget.controller.currentMission == null) {
+          widget.controller.currentMission == null ||
+          widget.controller.mapBytes == null) {
         final manifest = await widget.controller.backend.getMission(id, version);
-        widget.controller.currentMission = manifest;
-        widget.controller.updateMissionFields(
-          id: id,
-          version: version,
-          name: manifest['mission_name']?.toString() ?? id,
-        );
+        await widget.controller.hydrateActiveMission(manifest);
       }
       await widget.controller.refreshResults();
     } on Object {

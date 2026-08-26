@@ -49,11 +49,18 @@ class MissionCreateRequest(StrictModel):
         return self
 
 
+class JetsonMissionSyncRequest(StrictModel):
+    manifest: dict[str, Any]
+    base_map: str = Field(min_length=1)
+
+
 class ReviewCommandRequest(StrictModel):
     command: Literal[
         "set_victim_status",
         "set_victim_priority",
         "set_victim_position",
+        "add_victim",
+        "remove_added_victim",
         "set_route_approved",
         "modify_risk_zone",
         "clear_risk_zone",
@@ -83,6 +90,7 @@ class PlanBuildRequest(StrictModel):
 
 __all__ = [
     "ImagePoint",
+    "JetsonMissionSyncRequest",
     "MissionCreateRequest",
     "PlanBuildRequest",
     "ReviewCommandRequest",

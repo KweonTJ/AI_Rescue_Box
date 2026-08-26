@@ -35,19 +35,6 @@ final class SemanticMapView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bytes = controller.mapBytes;
-    if (bytes == null) {
-      return const Card(
-        child: SizedBox(
-          height: 360,
-          child: Center(child: Text('선택한 임무의 base map이 없습니다.')),
-        ),
-      );
-    }
-    final aspect = math.max(
-      0.1,
-      controller.imageWidth / controller.imageHeight,
-    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -68,45 +55,109 @@ final class SemanticMapView extends StatelessWidget {
         Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 650, maxWidth: 1100),
-            child: AspectRatio(
-              aspectRatio: aspect,
-              child: InteractiveViewer(
-                key: const Key('semantic-map-zoom-pan'),
-                minScale: 0.35,
-                maxScale: 12,
-                boundaryMargin: const EdgeInsets.all(120),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final size = constraints.biggest;
-                    return ClipRect(
-                      child: Stack(
-                        key: const Key('semantic-map-canvas'),
-                        fit: StackFit.expand,
-                        children: [
-                          Image.memory(
-                            bytes,
-                            fit: BoxFit.fill,
-                            gaplessPlayback: true,
-                            errorBuilder: (_, _, _) => const ColoredBox(
-                              color: Color(0xff20252b),
-                              child: Center(child: Text('base map 디코딩 실패')),
-                            ),
-                          ),
-                          if (controller.visibleLayers.contains('slam_preview'))
-                            _PreviewOverlay(controller: controller, size: size),
-                          CustomPaint(painter: _SemanticPainter(controller)),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
+            child: SemanticMapCanvas(
+              controller: controller,
+              visibleLayers: controller.visibleLayers,
             ),
           ),
         ),
         const SizedBox(height: 4),
         const Text('휠/핀치로 확대하고 드래그해 이동할 수 있습니다.'),
       ],
+    );
+  }
+}
+
+/// The shared base-map and semantic-overlay canvas.
+///
+/// Both layers fill this widget's single mission-map [AspectRatio], so any
+/// letterboxing happens outside the canvas and can never offset the overlay.
+final class SemanticMapCanvas extends StatelessWidget {
+  const SemanticMapCanvas({
+    super.key,
+    required this.controller,
+    required this.visibleLayers,
+    this.interactive = true,
+    this.overlayBuilder,
+  });
+
+  final HostController controller;
+  final Set<String> visibleLayers;
+  final bool interactive;
+  final Widget Function(BuildContext context, Size size)? overlayBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = controller.mapBytes;
+    if (bytes == null || bytes.isEmpty) {
+      return const SizedBox(
+        width: double.infinity,
+        height: 360,
+        child: ColoredBox(
+          key: Key('semantic-map-fallback'),
+          color: Color(0xfff4f5f4),
+          child: Center(child: Text('ACTIVE Mission의 base map을 불러올 수 없습니다.')),
+        ),
+      );
+    }
+    final aspect = math.max(
+      0.1,
+      controller.imageWidth / controller.imageHeight,
+    );
+    Widget canvas = LayoutBuilder(
+      builder: (context, constraints) {
+        final size = constraints.biggest;
+        return ClipRect(
+          child: Stack(
+            key: const Key('semantic-map-canvas'),
+            fit: StackFit.expand,
+            children: [
+              Image.memory(
+                bytes,
+                key: const Key('semantic-map-base-image'),
+                fit: BoxFit.fill,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => const ColoredBox(
+                  key: Key('semantic-map-decode-fallback'),
+                  color: Color(0xff20252b),
+                  child: Center(
+                    child: Text(
+                      'base map 디코딩 실패',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+              if (visibleLayers.contains('slam_preview'))
+                _PreviewOverlay(controller: controller, size: size),
+              CustomPaint(
+                key: const Key('semantic-map-overlay'),
+                painter: _SemanticPainter(controller, visibleLayers),
+              ),
+              if (overlayBuilder != null)
+                Positioned.fill(
+                  child: overlayBuilder!(context, size),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (interactive) {
+      canvas = InteractiveViewer(
+        key: const Key('semantic-map-zoom-pan'),
+        minScale: 0.35,
+        maxScale: 12,
+        boundaryMargin: const EdgeInsets.all(120),
+        child: canvas,
+      );
+    }
+    return Center(
+      child: AspectRatio(
+        key: const Key('semantic-map-aspect-ratio'),
+        aspectRatio: aspect,
+        child: canvas,
+      ),
     );
   }
 }
@@ -158,8 +209,9 @@ final class _PreviewOverlay extends StatelessWidget {
 }
 
 final class _SemanticPainter extends CustomPainter {
-  _SemanticPainter(this.controller);
+  _SemanticPainter(this.controller, this.visibleLayers);
   final HostController controller;
+  final Set<String> visibleLayers;
 
   JsonMap get semantic => controller.reviewedSemantic;
 
@@ -268,7 +320,7 @@ final class _SemanticPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (controller.visibleLayers.contains('robot_trajectory')) {
+    if (visibleLayers.contains('robot_trajectory')) {
       _drawPolyline(
         canvas,
         size,
@@ -276,23 +328,33 @@ final class _SemanticPainter extends CustomPainter {
         const Color(0xff00bfff),
       );
     }
-    if (controller.visibleLayers.contains('victim_candidates')) {
+    if (visibleLayers.contains('robot_pose')) {
+      _drawPoint(canvas, size, semantic['robot_pose'], const Color(0xff1677a8));
+    }
+    if (visibleLayers.contains('victim_candidates')) {
       for (final item in _items('victim_candidates')) {
         final status = item is Map ? item['host_status'] : null;
+        if (status?.toString() == 'excluded') continue;
         _drawPoint(canvas, size, item, candidateDisplayColor(status));
       }
     }
+    if (visibleLayers.contains('confirmed_victims')) {
+      for (final item in _items('confirmed_victims')) {
+        final status = item is Map ? item['host_status'] : null;
+        if (status?.toString() == 'excluded') continue;
+        _drawPoint(canvas, size, item, const Color(0xffe60026));
+      }
+    }
     for (final definition in const [
-      ('confirmed_victims', Color(0xffe60026)),
       ('team_recommendations', Color(0xff8a2be2)),
       ('safe_waiting_points', Color(0xff00a878)),
     ]) {
-      if (!controller.visibleLayers.contains(definition.$1)) continue;
+      if (!visibleLayers.contains(definition.$1)) continue;
       for (final item in _items(definition.$1)) {
         _drawPoint(canvas, size, item, definition.$2);
       }
     }
-    if (controller.visibleLayers.contains('entry_routes')) {
+    if (visibleLayers.contains('entry_routes')) {
       for (final item in _items('entry_routes')) {
         _drawPolyline(
           canvas,
@@ -303,17 +365,28 @@ final class _SemanticPainter extends CustomPainter {
         );
       }
     }
+    if (visibleLayers.contains('return_routes')) {
+      for (final item in _items('return_routes')) {
+        _drawPolyline(
+          canvas,
+          size,
+          _points(item),
+          const Color(0xff7656a8),
+          width: 4,
+        );
+      }
+    }
     for (final definition in const [
       ('obstacles', Color(0xff555555)),
       ('explored_areas', Color(0xff2a9d8f)),
       ('unknown_areas', Color(0xff888888)),
     ]) {
-      if (!controller.visibleLayers.contains(definition.$1)) continue;
+      if (!visibleLayers.contains(definition.$1)) continue;
       for (final item in _items(definition.$1)) {
         _drawPolygon(canvas, size, item, definition.$2);
       }
     }
-    if (controller.visibleLayers.contains('risk_zones')) {
+    if (visibleLayers.contains('risk_zones')) {
       for (final item in _items('risk_zones')) {
         final state = item is Map ? item['state']?.toString() : null;
         final color = switch (state) {
@@ -332,6 +405,7 @@ final class _SemanticPainter extends CustomPainter {
 
 String _layerLabel(String value) => switch (value) {
   'slam_preview' => 'SLAM preview',
+  'robot_pose' => 'AI Rescue Box 현재 위치',
   'robot_trajectory' => '궤적',
   'victim_candidates' => '요구조자 후보',
   'confirmed_victims' => '확정 요구조자',
@@ -340,6 +414,7 @@ String _layerLabel(String value) => switch (value) {
   'explored_areas' => '탐색 영역',
   'unknown_areas' => '미탐색 영역',
   'entry_routes' => '진입 경로',
+  'return_routes' => '복귀 경로',
   'team_recommendations' => '팀 배치',
   'safe_waiting_points' => '안전 대기점',
   _ => value,

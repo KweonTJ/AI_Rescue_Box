@@ -6,6 +6,7 @@ import copy
 import os
 import re
 import shutil
+import tempfile
 import threading
 import uuid
 from concurrent.futures import Future
@@ -88,6 +89,8 @@ class HostApiService:
         self._review_revisions: dict[tuple[str, int, int], int] = {}
         self._operations: dict[str, dict[str, Any]] = {}
         self._active_mission: tuple[str, int] | None = None
+        self._loaded_result: tuple[str, int, int] | None = None
+        self._published_final_map_path = self.data_root / "published_final_map.json"
         self._uploads_root = self.data_root / "api_uploads"
         self._uploads_root.mkdir(parents=True, exist_ok=True)
         self.bridge.add_status_listener(self._on_bridge_status)
@@ -335,6 +338,127 @@ class HostApiService:
         self.events.publish("mission.created", value)
         return value
 
+    def sync_jetson_mission(
+        self,
+        manifest_value: Mapping[str, Any],
+        base_map: bytes,
+    ) -> dict[str, Any]:
+        """Idempotently mirror Jetson's ACTIVE Mission over local Wi-Fi."""
+
+        manifest = MissionManifest.from_dict(manifest_value)
+        if not isinstance(base_map, bytes):
+            raise ValidationError("Jetson base map must be bytes")
+        if not 0 < len(base_map) <= self.normalization_options.max_input_bytes:
+            raise ValidationError("Jetson base map size is outside the allowed range")
+
+        with tempfile.TemporaryDirectory(
+            prefix=".jetson-mission-sync-", dir=self.data_root
+        ) as directory:
+            source = Path(directory) / manifest.base_map.filename
+            atomic_write_bytes(source, base_map)
+            with self._storage_lock:
+                target = self.store.mission_dir(
+                    manifest.mission_id, manifest.mission_version
+                )
+                reused = target.exists()
+                self.store.save_mission(
+                    manifest,
+                    source,
+                    None if reused else source,
+                )
+
+        active = (manifest.mission_id, manifest.mission_version)
+        with self._lock:
+            self._active_mission = active
+        value = {
+            "mission_id": active[0],
+            "mission_version": active[1],
+            "state": "ACTIVE",
+            "source": "jetson_http",
+            "base_map_sha256": manifest.base_map.sha256,
+            "reused": reused,
+        }
+        self.events.publish("mission.remote_activated", value)
+        return value
+
+    def publish_final_map(self) -> dict[str, Any]:
+        """Persist the currently loaded Host review for HTTP tablet clients."""
+
+        with self._lock:
+            active = self._active_mission
+            loaded = self._loaded_result
+        if active is None or loaded is None or loaded[:2] != active:
+            raise ValidationError(
+                "an active mission result must be loaded before publishing"
+            )
+
+        mission_id, mission_version, result_version = loaded
+        review = self._review(mission_id, mission_version, result_version)
+        # Publishing is a snapshot of the current review.  Do not go through
+        # build_approved_plan(), because that method may return the review's
+        # cached final_approved value for an idempotent explicit plan build.
+        with self._lock:
+            with self._storage_lock:
+                plans = self._stored_approved_plans(mission_id, mission_version)
+                next_plan_version = (
+                    plans[-1].approved_plan_version + 1 if plans else 1
+                )
+                plan = review.build_approved_plan(next_plan_version)
+                self.store.save_approved_plan(plan, mission_version)
+            approved_plan = plan.to_dict()
+            reviewed_result = review.reviewed_result
+
+        self.events.publish("approved_plan.built", approved_plan)
+
+        value = {
+            "state": "ready",
+            "mission_id": mission_id,
+            "mission_version": mission_version,
+            "result_version": result_version,
+            "approved_plan_version": int(
+                approved_plan["approved_plan_version"]
+            ),
+            "published_at": utc_now(),
+            "manifest": self.get_mission(mission_id, mission_version),
+            "semantic_result": reviewed_result,
+            "approved_plan": approved_plan,
+            "base_map_url": (
+                f"/api/v1/missions/{mission_id}/{mission_version}/base-map"
+            ),
+        }
+        with self._storage_lock:
+            atomic_write_json(
+                self._published_final_map_path,
+                value,
+                overwrite=True,
+            )
+        self.events.publish("final_map.published", value)
+        return copy.deepcopy(value)
+
+    def current_final_map_state(self) -> dict[str, Any]:
+        """Return only the final map explicitly published by the Host."""
+
+        with self._lock:
+            active = self._active_mission
+        with self._storage_lock:
+            if (
+                not self._published_final_map_path.is_file()
+                or self._published_final_map_path.is_symlink()
+            ):
+                return {
+                    "state": "waiting",
+                    "reason": "final_map_not_published",
+                }
+            value = self.store.load_json(self._published_final_map_path)
+        if active is None or (
+            value.get("mission_id"), value.get("mission_version")
+        ) != active:
+            return {
+                "state": "waiting",
+                "reason": "final_map_not_published",
+            }
+        return copy.deepcopy(value)
+
     def get_mission(self, mission_id: str, mission_version: int) -> dict[str, Any]:
         try:
             return self.store.load_manifest(mission_id, mission_version).to_dict()
@@ -555,6 +679,7 @@ class HostApiService:
                 self._reviews[key] = ReviewSession(semantic)
                 self._review_revisions[key] = 0
             self._active_mission = (mission_id, int(mission_version))
+            self._loaded_result = key
         value = self.review_state(*key)
         self.events.publish(
             "result.loaded",
@@ -631,6 +756,12 @@ class HostApiService:
                 review.set_victim_position(
                     required("victim_id"), required("x"), required("y")
                 )
+            elif command == "add_victim":
+                review.add_victim(
+                    required("victim_id"), required("x"), required("y")
+                )
+            elif command == "remove_added_victim":
+                review.remove_added_victim(required("victim_id"))
             elif command == "set_route_approved":
                 review.set_route_approved(required("route_id"), required("approved"))
             elif command == "modify_risk_zone":

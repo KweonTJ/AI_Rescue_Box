@@ -80,7 +80,7 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
         )
 
     tablet_ingestor = TabletMissionIngestor(service.manager)
-    mission_state_publisher = MissionStatePublisher(service.manager, service.transport)
+    mission_state_publisher = MissionStatePublisher(service.manager)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -214,7 +214,7 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
         selected = call(service.select_mission, mission_id, mission_version)
         try:
             sync = dict(mission_state_publisher.publish_active(mission_id, mission_version))
-            event_name = "mission.state_sync_queued" if sync.get("success") else "mission.state_sync_local_only"
+            event_name = "mission.state_sync_completed" if sync.get("success") else "mission.state_sync_local_only"
             service.events.publish(event_name, sync)
         except Exception as error:
             sync = {"success": False, "state": "sync_failed", "error": str(error)}
@@ -226,7 +226,7 @@ def create_app(service: JetsonApiService | None = None) -> FastAPI:
                     "error": str(error),
                 },
             )
-        # Local ACTIVE selection must remain usable even when UWB/Host is down.
+        # Local ACTIVE selection remains usable when the Wi-Fi Host is down.
         return {**selected, "mission_state_sync": sync}
 
     def processed_or_original(mission_id: str, mission_version: int) -> bytes:

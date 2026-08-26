@@ -251,7 +251,12 @@ def _validate_assignment(value: Mapping[str, Any]) -> dict[str, Any]:
     if not team_id:
         raise ValidationError("team assignment requires team_id")
     result["team_id"] = team_id
-    position = result.get("position")
+    position = (
+        result.get("position")
+        or result.get("current_position")
+        or result.get("recommended_position")
+        or result.get("map_position")
+    )
     if not isinstance(position, Mapping):
         raise ValidationError("team assignment requires position")
     result["position"] = _point_dict(position.get("x"), position.get("y"))
@@ -291,6 +296,7 @@ class ReviewSession:
             "victim_status": {},
             "victim_priorities": {},
             "victim_modifications": {},
+            "added_victims": [],
             "risk_modifications": {},
             "cleared_risk_ids": [],
             "added_risk_zones": [],
@@ -382,26 +388,97 @@ class ReviewSession:
 
     def set_victim_position(self, victim_id: str, x: float, y: float) -> None:
         victim_id = str(victim_id)
+        point = _point_dict(x, y)
         known_ids = {
             _identifier(item, ("detection_id", "victim_id", "id"))
             for item in self._original["victim_candidates"] + self._original["confirmed_victims"]
         }
-        if victim_id not in known_ids:
-            raise ValidationError("victim marker was not found")
+        if victim_id in known_ids:
+            self._before_edit()
+            self._edits["victim_modifications"].setdefault(victim_id, {}).update(
+                {
+                    "x": point["x"],
+                    "y": point["y"],
+                    "map_position": point,
+                    "position": point,
+                    "host_status": "position_modified",
+                }
+            )
+            return
+
+        added = copy.deepcopy(self._edits["added_victims"])
+        for item in added:
+            if _identifier(item, ("detection_id", "victim_id", "id")) == victim_id:
+                self._before_edit()
+                item.update(
+                    {
+                        "x": point["x"],
+                        "y": point["y"],
+                        "map_position": point,
+                        "position": point,
+                        "host_status": "modified",
+                    }
+                )
+                self._edits["added_victims"] = added
+                return
+        raise ValidationError("victim marker was not found")
+
+    def add_victim(self, victim_id: str, x: float, y: float) -> None:
+        victim_id = str(victim_id).strip()
+        if not victim_id:
+            raise ValidationError("victim_id is required")
+        all_ids = {
+            _identifier(item, ("detection_id", "victim_id", "id"))
+            for item in self._original["victim_candidates"] + self._original["confirmed_victims"]
+        } | {
+            _identifier(item, ("detection_id", "victim_id", "id"))
+            for item in self._edits["added_victims"]
+        }
+        if victim_id in all_ids:
+            raise ValidationError("victim_id already exists")
+        point = _point_dict(x, y)
         self._before_edit()
-        self._edits["victim_modifications"].setdefault(victim_id, {}).update(
+        self._edits["added_victims"].append(
             {
-                "map_position": _point_dict(x, y),
-                "position": _point_dict(x, y),
-                "host_status": "position_modified",
+                "id": victim_id,
+                "victim_id": victim_id,
+                "label": "요구조자",
+                "status": "confirmed",
+                "x": point["x"],
+                "y": point["y"],
+                "map_position": point,
+                "position": point,
+                "source": "host_user",
+                "host_status": "added",
+                "confidence": 1.0,
             }
         )
+
+    def remove_added_victim(self, victim_id: str) -> None:
+        victim_id = str(victim_id)
+        remaining = [
+            item
+            for item in self._edits["added_victims"]
+            if _identifier(item, ("detection_id", "victim_id", "id")) != victim_id
+        ]
+        if len(remaining) == len(self._edits["added_victims"]):
+            raise ValidationError("Host-added victim was not found")
+        self._before_edit()
+        self._edits["added_victims"] = remaining
 
     def set_route_approved(self, route_id: str, approved: bool) -> None:
         if not isinstance(approved, bool):
             raise ValidationError("approved must be boolean")
+        route_id = str(route_id)
+        known_route_ids = {
+            _identifier(route, ("route_id", "id"))
+            for layer in ("entry_routes", "return_routes")
+            for route in self._original.get(layer, [])
+        }
+        if route_id not in known_route_ids:
+            raise ValidationError("route was not found in the current review")
         self._before_edit()
-        self._edits["route_approvals"][str(route_id)] = approved
+        self._edits["route_approvals"][route_id] = approved
 
     def modify_risk_zone(self, risk_id: str, risk_zone: Mapping[str, Any]) -> None:
         risk_id = str(risk_id)
@@ -579,6 +656,7 @@ class ReviewSession:
                     item["priority"] = self._edits["victim_priorities"][item_id]
                 reviewed.append(item)
             result[layer] = reviewed
+        result["confirmed_victims"].extend(copy.deepcopy(self._edits["added_victims"]))
         cleared = set(self._edits["cleared_risk_ids"])
         risk_modifications = self._edits["risk_modifications"]
         result["risk_zones"] = [
@@ -621,6 +699,7 @@ class ReviewSession:
                 ]
             if reviewed_confirmed["host_status"] != "excluded":
                 approved_victims.append(reviewed_confirmed)
+        approved_victims.extend(copy.deepcopy(self._edits["added_victims"]))
         excluded: list[Mapping[str, Any]] = []
         for item in candidates:
             item_id = _identifier(item, ("detection_id", "victim_id", "id"))
@@ -652,7 +731,7 @@ class ReviewSession:
         approved_risks.extend(copy.deepcopy(self._edits["added_risk_zones"]))
         changed_risks.extend(copy.deepcopy(self._edits["added_risk_zones"]))
         routes = []
-        for route in self._original["entry_routes"]:
+        for route in self.reviewed_result["entry_routes"]:
             route_id = _identifier(route, ("route_id", "id"))
             if self._edits["route_approvals"].get(route_id, False):
                 reviewed = copy.deepcopy(route)
