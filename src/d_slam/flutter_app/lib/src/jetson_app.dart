@@ -6,12 +6,12 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:rescue_api_client/rescue_api_client.dart';
 
 import 'jetson_controller.dart';
 
 part 'dashboard.dart';
+part 'final_map_page.dart';
 part 'mission_landing.dart';
 part 'mission_management.dart';
 part 'mission_workflow_v2.dart';
@@ -269,7 +269,12 @@ class _RescueJetsonAppState extends State<RescueJetsonApp> {
                       controller: widget.controller,
                       onSelect: _activateMission,
                     ),
-                  _ => _Dashboard(
+                  2 => _Dashboard(
+                      controller: widget.controller,
+                      onChooseAnotherMission:
+                          _openActivePage,
+                    ),
+                  _ => _FinalMapPage(
                       controller: widget.controller,
                       onChooseAnotherMission:
                           _openActivePage,
@@ -463,6 +468,10 @@ class _TabletPrimaryNav extends StatelessWidget {
       (
         '운영',
         Icons.monitor_heart_outlined,
+      ),
+      (
+        '최종 지도',
+        Icons.map_outlined,
       ),
     ];
 

@@ -1,3 +1,0 @@
-registration_failed=4162
-inlier_or_lost_matches=1296
-loop_closure_matches=0

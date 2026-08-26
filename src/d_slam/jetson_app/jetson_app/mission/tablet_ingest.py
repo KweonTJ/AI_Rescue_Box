@@ -212,8 +212,6 @@ class TabletMissionIngestor:
         rescuers = _nonnegative_int(
             draft.get("available_rescuers", 0), "available_rescuers"
         )
-        if teams == 0 and rescuers == 0:
-            raise ValidationError("available teams or rescuers must be greater than zero")
 
         entrances: list[dict[str, Any]] = []
         for index, image_point in enumerate(entrance_images, start=1):

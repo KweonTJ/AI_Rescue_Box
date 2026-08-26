@@ -157,6 +157,10 @@ def main() -> int:
                 goal_callback=lambda _: GoalResponse.ACCEPT,
                 callback_group=group,
             )
+            # Prevent overlapping drain callbacks. A UWB transfer can block
+            # while waiting for radio/application ACK, so re-entering the timer
+            # would exhaust executor threads and starve ROS action responses.
+            self._drain_lock = threading.Lock()
             interval = float(os.environ.get("AI_RESCUE_UWB_OUTBOX_DRAIN_SECONDS", "1.0"))
             self._drain_timer = self.create_timer(max(0.2, interval), self._drain_outbox, callback_group=group)
 
@@ -182,13 +186,23 @@ def main() -> int:
                 digest = hashlib.sha256(source.read_bytes()).hexdigest()
                 if str(request.sha256) != digest:
                     raise ValueError("queued artifact SHA-256 differs from request")
-                outcome = dict(self._runtime.queue_artifact(
+                # /uwb/queue_artifact is a durable enqueue boundary.
+                # Persist here and let the background drain own radio delivery.
+                # Do not synchronously call /uwb/send_artifact from this action.
+                outbox = self._runtime.outbox
+                if outbox is None:
+                    raise RuntimeError("persistent UWB outbox is not configured")
+                entry = outbox.enqueue(
                     source,
                     artifact_type=str(request.artifact_type),
                     mission_id=str(request.mission_id),
                     artifact_version=int(request.artifact_version),
                     priority=int(request.priority),
-                ))
+                )
+                outcome = {
+                    "state": "persisted",
+                    "entry_id": entry.entry_id,
+                }
                 result_message.success = True
                 result_message.transfer_id = str(outcome.get("transfer_id") or outcome.get("entry_id") or "")
                 result_message.uwb_frame_ack = bool(outcome.get("frame_ack", False))
@@ -209,11 +223,22 @@ def main() -> int:
             return result_message
 
         def _drain_outbox(self) -> None:
-            for outcome in self._runtime.drain_outbox(max_entries=8):
-                if outcome.get("error_message") and not (outcome.get("application_applied_ack") or outcome.get("application_ack")):
-                    self.get_logger().warning(
-                        f"outbox pending entry={outcome.get('entry_id')}: {outcome.get('error_message')}"
-                    )
+            # Only one drain may run at a time. Keep each tick bounded to one
+            # artifact so a slow radio/ACK cannot monopolize the executor.
+            if not self._drain_lock.acquire(blocking=False):
+                return
+            try:
+                for outcome in self._runtime.drain_outbox(max_entries=1):
+                    if outcome.get("error_message") and not (
+                        outcome.get("application_applied_ack")
+                        or outcome.get("application_ack")
+                    ):
+                        self.get_logger().warning(
+                            f"outbox pending entry={outcome.get('entry_id')}: "
+                            f"{outcome.get('error_message')}"
+                        )
+            finally:
+                self._drain_lock.release()
 
         def _submit_update(self, goal_handle: object) -> object:
             result_message = SubmitRescueUpdate.Result()

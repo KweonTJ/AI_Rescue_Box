@@ -1,81 +1,64 @@
-# ROS 2 / colcon
-build/
-install/
-log/
-**/build/
-**/install/
-**/log/
-
 # Python
+.venv/
+.venv-*/
+venv/
 __pycache__/
-**/__pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.coverage
-htmlcov/
-
-# Virtual environments
-.venv/
-.venv-*/
-.venv_*/
-venv/
 
 # Flutter / Dart
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
-**/flutter_app/build/
-**/flutter_app/.dart_tool/
+build/
+**/build/
+**/local.properties
+**/android/.gradle/
+**/linux/flutter/ephemeral/
+**/pubspec.lock
 
-# PlatformIO
-.pio/
-**/.pio/
+# ROS / colcon
+log/
+install/
+**/colcon_ws/build/
+**/colcon_ws/install/
+**/colcon_ws/log/
+data/jetson_colcon/
 
-# Android signing secrets
-**/android/key.properties
-*.jks
-*.keystore
+# AI Rescue Box runtime data
+data/logs/
+data/runtime/
+data/jetson/
+data/host/
+data/uwb_spool/
+data/uwb_spool_*/
+*.db
+*.db-shm
+*.db-wal
+current_mission.json
 
-# IDE / OS
+# Generated captures / maps / transfer files
+person.jpg
+depth.jpg
+*_map_check.*
+host_base_map_test.*
+new_mission_map.*
+ex_semantic_result*.json
+
+# Backups and temporary files
+*.bak
+*.before_*
+*.pre_*
+*.tmp
+*.part
+*~
+
+# Editors / OS
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 .DS_Store
 Thumbs.db
-
-# Local secrets and machine-specific configuration
-.env
-.env.*
-!*.env.example
-src/host/config/host.env
-src/d_slam/config/jetson.env
-src/uwb/config/jetson.env
-
-# Runtime/release data
-/data/
-/dist/
-/tmp/
-/temp/
-/cache/
-*.log
-
-# ROS bags and generated maps
-*.bag
-*.db3
-*.mcap
-rosbag2_*/
-src/d_slam/**/video/
-src/d_slam/**/map/*.db
-src/d_slam/**/runtime/
-
-# Model weights are installed separately
-*.engine
-*.onnx
-*.pt
-*.pth

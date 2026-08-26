@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any, Mapping, Sequence
 
@@ -10,9 +11,10 @@ from .analysis import AnalysisPipeline
 from .config import AppConfig
 from .domain import MissionManifest, PersonCandidate, Pose2D
 from .perception import OpenCvYoloPersonDetectionProvider, PersonFusionEngine
+from .perception.external_detector import RosTopicPersonDetectionProvider
 from .planning import AStarRoutePlanner, RuleBasedTeamRecommendationProvider
 from .providers import MockSlamProvider, deterministic_mock_candidates
-from .providers.base import ProviderMode, ProviderStatus
+from .providers.base import PersonDetectionProvider, ProviderMode, ProviderStatus
 from .risk import RuleBasedRiskAssessmentProvider
 from .ros_client.adapters import (
     AstraDepthProvider,
@@ -29,8 +31,10 @@ from .ros_client.sensor_node import (
 
 try:
     from nav_msgs.msg import Odometry
+    from rclpy.qos import qos_profile_sensor_data
 except ImportError:
     Odometry = None
+    qos_profile_sensor_data = None
 
 
 class RuntimeUnavailableError(RuntimeError):
@@ -100,7 +104,7 @@ class Stage3SensorRosNode(SensorRosNode):
                 Odometry,
                 self.config.topics.odometry,
                 self._on_stage3_odometry,
-                10,
+                qos_profile_sensor_data if qos_profile_sensor_data is not None else 10,
             )
         else:
             self._odometry_subscription = None
@@ -225,7 +229,10 @@ class Stage3Runtime:
         self._owns_rclpy = False
         self._sensor_runtime_error = ""
         self.sensor_node: Stage3SensorRosNode | None = None
-        self.detector: OpenCvYoloPersonDetectionProvider | None = None
+        self.detector: PersonDetectionProvider | None = None
+        self.external_person_topic = os.environ.get(
+            "AI_RESCUE_EXTERNAL_PERSON_TOPIC", ""
+        ).strip()
         self.depth: AstraDepthProvider | None = None
 
         risk = RuleBasedRiskAssessmentProvider(
@@ -261,10 +268,16 @@ class Stage3Runtime:
             dependency_state=dependencies,
             maximum_sync_age_s=config.sensor_sync_tolerance_s,
         )
-        self.detector = OpenCvYoloPersonDetectionProvider(
-            config.model_path,
-            confidence_threshold=config.detection_confidence,
-        )
+        if self.external_person_topic:
+            self.detector = RosTopicPersonDetectionProvider(
+                self.external_person_topic,
+                confidence_threshold=config.detection_confidence,
+            )
+        else:
+            self.detector = OpenCvYoloPersonDetectionProvider(
+                config.model_path,
+                confidence_threshold=config.detection_confidence,
+            )
         if dependencies.rclpy and dependencies.sensor_msgs and dependencies.nav_msgs:
             try:
                 import rclpy
@@ -383,6 +396,7 @@ class Stage3Runtime:
         detector_status = _provider_status(detector_state, code=detector_code)
         if (
             detector_status["connected"]
+            and isinstance(self.detector, OpenCvYoloPersonDetectionProvider)
             and getattr(self, "dependencies", None) is not None
             and not self.dependencies.cv_bridge
         ):
